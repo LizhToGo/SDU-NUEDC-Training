@@ -11,6 +11,9 @@
 #define TB6612_PWM_MAX (999U)
 
 /*
+ * Current wiring:
+ * PWMA=PA0, PWMB=PA1, AIN1=PB0, AIN2=PB1, BIN1=PB8, BIN2=PB3, STBY=PB7.
+ *
  * Default forward levels follow the WHEELTEC TB6612 demo:
  * motor A forward: AIN1=1, AIN2=0
  * motor B forward: BIN1=0, BIN2=1
@@ -38,6 +41,7 @@
 #define AIN2_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_AIN2_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_AIN2_PIN)))
 #define BIN1_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_BIN1_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_BIN1_PIN)))
 #define BIN2_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_BIN2_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_BIN2_PIN)))
+#define STBY_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_STBY_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_STBY_PIN)))
 
 typedef enum {
     TB6612_MOTOR_A = 0,
@@ -45,6 +49,8 @@ typedef enum {
 } tb6612_motor_t;
 
 void TB6612_Init(void);
+void TB6612_Enable(void);
+void TB6612_Disable(void);
 void TB6612_Brake(void);
 void TB6612_Coast(void);
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed);

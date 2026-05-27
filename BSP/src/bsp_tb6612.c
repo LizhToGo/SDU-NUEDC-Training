@@ -22,9 +22,9 @@ static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
     }
 
     if (motor == TB6612_MOTOR_A) {
-        DL_TimerA_setCaptureCompareValue(PWM_0_INST, pwm, GPIO_PWM_0_C1_IDX);
-    } else {
         DL_TimerA_setCaptureCompareValue(PWM_0_INST, pwm, GPIO_PWM_0_C0_IDX);
+    } else {
+        DL_TimerA_setCaptureCompareValue(PWM_0_INST, pwm, GPIO_PWM_0_C1_IDX);
     }
 }
 
@@ -60,11 +60,25 @@ static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 
 void TB6612_Init(void)
 {
+    TB6612_Enable();
     TB6612_Brake();
+}
+
+void TB6612_Enable(void)
+{
+    STBY_OUT(1);
+}
+
+void TB6612_Disable(void)
+{
+    TB6612_SetPwm(TB6612_MOTOR_A, 0);
+    TB6612_SetPwm(TB6612_MOTOR_B, 0);
+    STBY_OUT(0);
 }
 
 void TB6612_Brake(void)
 {
+    TB6612_Enable();
     TB6612_SetPwm(TB6612_MOTOR_A, TB6612_PWM_MAX);
     TB6612_SetPwm(TB6612_MOTOR_B, TB6612_PWM_MAX);
 
@@ -76,6 +90,7 @@ void TB6612_Brake(void)
 
 void TB6612_Coast(void)
 {
+    TB6612_Enable();
     TB6612_SetPwm(TB6612_MOTOR_A, 0);
     TB6612_SetPwm(TB6612_MOTOR_B, 0);
 
@@ -100,6 +115,7 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
         TB6612_SetDirection(motor, 0);
     }
 
+    TB6612_Enable();
     TB6612_SetPwm(motor, pwm);
 }
 
