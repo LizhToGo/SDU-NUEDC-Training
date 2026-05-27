@@ -1,89 +1,137 @@
-/*
- * 立创开发板软硬件资料与相关扩展板软硬件资料官网全部开源
- * 开发板官网：www.lckfb.com
- * 文档网站：wiki.lckfb.com
- * 技术支持常驻论坛，任何技术问题欢迎随时交流学习
- * 嘉立创社区问答：https://www.jlc-bbs.com/lckfb
- * 关注bilibili账号：【立创开发板】，掌握我们的最新动态！
- * 不靠卖板赚钱，以培养中国工程师为己任
- */
 #include "bsp_tb6612.h"
-#include "board.h"
 
-/******************************************************************
- * 函 数 名 称：TB6612_Motor_Stop
- * 函 数 说 明：A端和B端电机停止
- * 函 数 形 参：无
- * 函 数 返 回：无
- * 作       者：LCKFB
- * 备       注：无
-******************************************************************/
-void TB6612_Motor_Stop(void)
+static uint32_t TB6612_AbsClamp(int16_t speed)
 {
+    int32_t value = speed;
+
+    if (value < 0) {
+        value = -value;
+    }
+
+    if (value > (int32_t)TB6612_PWM_MAX) {
+        value = (int32_t)TB6612_PWM_MAX;
+    }
+
+    return (uint32_t)value;
+}
+
+static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
+{
+    if (pwm > TB6612_PWM_MAX) {
+        pwm = TB6612_PWM_MAX;
+    }
+
+    if (motor == TB6612_MOTOR_A) {
+        DL_TimerA_setCaptureCompareValue(PWM_0_INST, pwm, GPIO_PWM_0_C1_IDX);
+    } else {
+        DL_TimerA_setCaptureCompareValue(PWM_0_INST, pwm, GPIO_PWM_0_C0_IDX);
+    }
+}
+
+static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
+{
+    uint8_t in1;
+    uint8_t in2;
+
+    if (motor == TB6612_MOTOR_A) {
+        in1 = (uint8_t)TB6612_A_FORWARD_IN1;
+        in2 = (uint8_t)TB6612_A_FORWARD_IN2;
+
+        if (!forward) {
+            in1 = !in1;
+            in2 = !in2;
+        }
+
+        AIN1_OUT(in1);
+        AIN2_OUT(in2);
+    } else {
+        in1 = (uint8_t)TB6612_B_FORWARD_IN1;
+        in2 = (uint8_t)TB6612_B_FORWARD_IN2;
+
+        if (!forward) {
+            in1 = !in1;
+            in2 = !in2;
+        }
+
+        BIN1_OUT(in1);
+        BIN2_OUT(in2);
+    }
+}
+
+void TB6612_Init(void)
+{
+    TB6612_Brake();
+}
+
+void TB6612_Brake(void)
+{
+    TB6612_SetPwm(TB6612_MOTOR_A, TB6612_PWM_MAX);
+    TB6612_SetPwm(TB6612_MOTOR_B, TB6612_PWM_MAX);
+
     AIN1_OUT(1);
     AIN2_OUT(1);
     BIN1_OUT(1);
     BIN2_OUT(1);
 }
 
-/******************************************************************
- * 函 数 名 称：AO_Control
- * 函 数 说 明：A端口电机控制
- * 函 数 形 参：dir旋转方向 1正转0反转   speed旋转速度，范围（0 ~ per-1）
- * 函 数 返 回：无
- * 作       者：LCKFB
- * 备       注：speed 0-1000
-******************************************************************/
-void AO_Control(uint8_t dir, uint32_t speed)
+void TB6612_Coast(void)
 {
-    if(speed > 999 || dir > 1)
-    {
-        lc_printf("\nAO_Control parameter error!!!\r\n");
-        return;
-    }
+    TB6612_SetPwm(TB6612_MOTOR_A, 0);
+    TB6612_SetPwm(TB6612_MOTOR_B, 0);
 
-    if( dir == 1 )
-    {
-        AIN1_OUT(0);
-        AIN2_OUT(1);
-    }
-    else
-    {
-        AIN1_OUT(1);
-        AIN2_OUT(0);
-    }
-
-    DL_TimerG_setCaptureCompareValue(PWM_0_INST, speed, GPIO_PWM_0_C1_IDX);
+    AIN1_OUT(0);
+    AIN2_OUT(0);
+    BIN1_OUT(0);
+    BIN2_OUT(0);
 }
 
-
-
-/******************************************************************
- * 函 数 名 称：BO_Control
- * 函 数 说 明：B端口电机控制
- * 函 数 形 参：dir旋转方向 1正转0反转   speed旋转速度，范围（0 ~ per-1）
- * 函 数 返 回：无
- * 作       者：LCKFB
- * 备       注：speed 0-1000
-******************************************************************/
-void BO_Control(uint8_t dir, uint32_t speed)
+void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 {
-    if(speed > 999 || dir > 1)
-    {
-        lc_printf("\nAO_Control parameter error!!!\r\n");
+    uint32_t pwm = TB6612_AbsClamp(speed);
+
+    if ((motor != TB6612_MOTOR_A) && (motor != TB6612_MOTOR_B)) {
+        lc_printf("\r\nTB6612_SetMotor parameter error\r\n");
         return;
     }
 
-    if( dir == 1 )
-    {
-        BIN1_OUT(0);
-        BIN2_OUT(1);
-    }
-    else
-    {
-        BIN1_OUT(1);
-        BIN2_OUT(0);
+    if (speed >= 0) {
+        TB6612_SetDirection(motor, 1);
+    } else {
+        TB6612_SetDirection(motor, 0);
     }
 
-    DL_TimerG_setCaptureCompareValue(PWM_0_INST, speed, GPIO_PWM_0_C0_IDX);
+    TB6612_SetPwm(motor, pwm);
+}
+
+void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
+{
+    TB6612_SetMotor(TB6612_MOTOR_A, left_speed);
+    TB6612_SetMotor(TB6612_MOTOR_B, right_speed);
+}
+
+void TB6612_Motor_Stop(void)
+{
+    TB6612_Brake();
+}
+
+void AO_Control(uint8_t dir, uint32_t speed)
+{
+    if ((speed > TB6612_PWM_MAX) || (dir > 1U)) {
+        lc_printf("\r\nAO_Control parameter error\r\n");
+        return;
+    }
+
+    TB6612_SetDirection(TB6612_MOTOR_A, dir);
+    TB6612_SetPwm(TB6612_MOTOR_A, speed);
+}
+
+void BO_Control(uint8_t dir, uint32_t speed)
+{
+    if ((speed > TB6612_PWM_MAX) || (dir > 1U)) {
+        lc_printf("\r\nBO_Control parameter error\r\n");
+        return;
+    }
+
+    TB6612_SetDirection(TB6612_MOTOR_B, dir);
+    TB6612_SetPwm(TB6612_MOTOR_B, speed);
 }
