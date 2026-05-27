@@ -1,0 +1,38 @@
+# Local editor settings
+.vscode/
+
+# CCS / Eclipse build output directories
+/Debug/
+/Release/
+/build/
+
+# Object files and dependency files
+*.o
+*.obj
+*.d
+
+# Linker / firmware output
+*.out
+*.elf
+*.hex
+*.bin
+*.map
+*_linkInfo.xml
+
+# Generated make/build helper files
+makefile
+objects.mk
+sources.mk
+subdir_rules.mk
+subdir_vars.mk
+*.opt
+*.genlibs
+
+# Clangd cache
+.clangd
+.clangd/
+**/.clangd/
+
+# OS noise
+Thumbs.db
+.DS_Store
