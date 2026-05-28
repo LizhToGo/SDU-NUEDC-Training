@@ -22,11 +22,11 @@
  * four values.
  */
 #ifndef TB6612_A_FORWARD_IN1
-#define TB6612_A_FORWARD_IN1 (1U)
+#define TB6612_A_FORWARD_IN1 (0U)
 #endif
 
 #ifndef TB6612_A_FORWARD_IN2
-#define TB6612_A_FORWARD_IN2 (0U)
+#define TB6612_A_FORWARD_IN2 (1U)
 #endif
 
 #ifndef TB6612_B_FORWARD_IN1

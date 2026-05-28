@@ -121,8 +121,8 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
 {
-    TB6612_SetMotor(TB6612_MOTOR_A, left_speed);
-    TB6612_SetMotor(TB6612_MOTOR_B, right_speed);
+    TB6612_SetMotor(TB6612_MOTOR_B, left_speed);
+    TB6612_SetMotor(TB6612_MOTOR_A, right_speed);
 }
 
 void TB6612_Motor_Stop(void)
