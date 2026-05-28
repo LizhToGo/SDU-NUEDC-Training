@@ -12,7 +12,7 @@
 
 /*
  * Current wiring from 暂行接线图.md:
- * PWMA=PA0 left wheel, PWMB=PA1 right wheel,
+ * Real-car self-test: PWMA=PA0 right wheel, PWMB=PA1 left wheel,
  * AIN1=PB6, AIN2=PB7, BIN1=PB8, BIN2=PB9, STBY=PB1.
  *
  * Default forward levels follow the WHEELTEC TB6612 demo:

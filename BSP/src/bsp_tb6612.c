@@ -109,6 +109,20 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
         return;
     }
 
+    if (pwm == 0U) {
+        if (motor == TB6612_MOTOR_A) {
+            AIN1_OUT(0);
+            AIN2_OUT(0);
+        } else {
+            BIN1_OUT(0);
+            BIN2_OUT(0);
+        }
+
+        TB6612_SetPwm(motor, 0);
+        TB6612_Enable();
+        return;
+    }
+
     if (speed >= 0) {
         TB6612_SetDirection(motor, 1);
     } else {
@@ -121,8 +135,8 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
 {
-    TB6612_SetMotor(TB6612_MOTOR_A, left_speed);
-    TB6612_SetMotor(TB6612_MOTOR_B, right_speed);
+    TB6612_SetMotor(TB6612_MOTOR_B, left_speed);
+    TB6612_SetMotor(TB6612_MOTOR_A, right_speed);
 }
 
 void TB6612_Motor_Stop(void)
