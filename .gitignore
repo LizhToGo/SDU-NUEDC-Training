@@ -36,3 +36,5 @@ subdir_vars.mk
 # OS noise
 Thumbs.db
 .DS_Store
+
+AGENT.md

@@ -94,7 +94,7 @@ INIT -> CALIBRATE -> WAIT_START -> SEGMENT_x -> PROMPT_POINT -> STOP
 | 方式 | 数据 | MSPM0G3507 示例接线 | 建议 |
 | --- | --- | --- | --- |
 | IO | 8 路数字量 | `PA28=x1, PA31=x2, PA02=x3, PB24=x4, PB20=x5, PB19=x6, PB18=x7, PA07=x8` | 最直观，但占 8 个 IO |
-| I2C | 8 路数字量 | `PA0=SDA, PA1=SCL, 5V, GND` | 推荐优先试，省 IO |
+| I2C | 8 路数字量 | `PB3=SDA, PB2=SCL, 3V3, GND` | 当前暂行接线，推荐优先试，省 IO |
 | USART | 数字量 + 模拟量 | `PA9=TX, PA8=RX, 5V, GND` | 能拿模拟量，但占串口 |
 
 协议要点：

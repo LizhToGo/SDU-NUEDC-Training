@@ -60,7 +60,7 @@ static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 
 void TB6612_Init(void)
 {
-    TB6612_Enable();
+    TB6612_Disable();
     TB6612_Brake();
 }
 
@@ -78,7 +78,6 @@ void TB6612_Disable(void)
 
 void TB6612_Brake(void)
 {
-    TB6612_Enable();
     TB6612_SetPwm(TB6612_MOTOR_A, TB6612_PWM_MAX);
     TB6612_SetPwm(TB6612_MOTOR_B, TB6612_PWM_MAX);
 
@@ -86,11 +85,11 @@ void TB6612_Brake(void)
     AIN2_OUT(1);
     BIN1_OUT(1);
     BIN2_OUT(1);
+    TB6612_Enable();
 }
 
 void TB6612_Coast(void)
 {
-    TB6612_Enable();
     TB6612_SetPwm(TB6612_MOTOR_A, 0);
     TB6612_SetPwm(TB6612_MOTOR_B, 0);
 
@@ -98,6 +97,7 @@ void TB6612_Coast(void)
     AIN2_OUT(0);
     BIN1_OUT(0);
     BIN2_OUT(0);
+    TB6612_Enable();
 }
 
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
@@ -121,8 +121,8 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
 {
-    TB6612_SetMotor(TB6612_MOTOR_B, left_speed);
-    TB6612_SetMotor(TB6612_MOTOR_A, right_speed);
+    TB6612_SetMotor(TB6612_MOTOR_A, left_speed);
+    TB6612_SetMotor(TB6612_MOTOR_B, right_speed);
 }
 
 void TB6612_Motor_Stop(void)

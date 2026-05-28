@@ -11,11 +11,12 @@
 #define TB6612_PWM_MAX (999U)
 
 /*
- * Current wiring:
- * PWMA=PA0, PWMB=PA1, AIN1=PB0, AIN2=PB1, BIN1=PB8, BIN2=PB3, STBY=PB7.
+ * Current wiring from 暂行接线图.md:
+ * PWMA=PA0 left wheel, PWMB=PA1 right wheel,
+ * AIN1=PB6, AIN2=PB7, BIN1=PB8, BIN2=PB9, STBY=PB1.
  *
  * Default forward levels follow the WHEELTEC TB6612 demo:
- * motor A forward: AIN1=1, AIN2=0
+ * motor A forward: AIN1=0, AIN2=1
  * motor B forward: BIN1=0, BIN2=1
  *
  * If your car runs backward, either swap the motor wires or change these
