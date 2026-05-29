@@ -41,7 +41,7 @@
 #define ENABLE_LINE_FOLLOW_TEST      (1)
 #define LINE_FOLLOW_PERIOD_MS        (20)
 #define LINE_FOLLOW_REPORT_PERIOD_MS (300)
-#define LINE_FOLLOW_BASE_PWM         (480)
+#define LINE_FOLLOW_BASE_PWM         (520)
 #define LINE_FOLLOW_MIN_PWM          (0)
 #define LINE_FOLLOW_MAX_PWM          (820)
 #define LINE_FOLLOW_TURN_DIVISOR     (11)
