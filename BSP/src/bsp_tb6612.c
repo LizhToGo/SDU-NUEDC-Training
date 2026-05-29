@@ -1,5 +1,6 @@
 #include "bsp_tb6612.h"
 
+/* 将带符号速度命令转换为限幅后的 PWM 比较值。 */
 static uint32_t TB6612_AbsClamp(int16_t speed)
 {
     int32_t value = speed;
@@ -15,6 +16,7 @@ static uint32_t TB6612_AbsClamp(int16_t speed)
     return (uint32_t)value;
 }
 
+/* A 电机使用 PWM 通道 C0，B 电机使用 PWM 通道 C1。 */
 static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
 {
     if (pwm > TB6612_PWM_MAX) {
@@ -28,6 +30,7 @@ static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
     }
 }
 
+/* 根据正反转方向设置 TB6612 某一路半桥的方向引脚电平。 */
 static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 {
     uint8_t in1;
@@ -60,6 +63,7 @@ static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 
 void TB6612_Init(void)
 {
+    /* 先进入待机状态，再切到明确的刹车状态。 */
     TB6612_Disable();
     TB6612_Brake();
 }
@@ -109,6 +113,7 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
         return;
     }
 
+    /* 速度为 0 时让该电机滑行停止，而不是主动刹车。 */
     if (pwm == 0U) {
         if (motor == TB6612_MOTOR_A) {
             AIN1_OUT(0);
@@ -135,6 +140,7 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
 {
+    /* 当前接线：B 电机是左轮，A 电机是右轮。 */
     TB6612_SetMotor(TB6612_MOTOR_B, left_speed);
     TB6612_SetMotor(TB6612_MOTOR_A, right_speed);
 }

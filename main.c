@@ -1,45 +1,91 @@
 #include "ti_msp_dl_config.h"
 #include "board.h"
 #include "bsp_tb6612.h"
+#include "bsp_ir_tracking.h"
 
+/*
+ * 当前主程序说明：
+ *
+ * 1. 上电后先由 SysConfig 初始化时钟、GPIO、PWM、UART、I2C 等外设。
+ * 2. 初始化编码器状态和 TB6612 电机驱动。
+ * 3. 如果 ENABLE_IR_TRACKING_UART_TEST 为 1，进入八路红外循迹模块测试：
+ *    通过 I2C 读取模块数据，再通过 UART0 串口打印，电机保持刹车。
+ * 4. 如果 ENABLE_IR_TRACKING_UART_TEST 为 0，进入后驱两轮直行 PID 测试：
+ *    利用 A/B 电机编码器计数修正左右轮 PWM，使小车尽量直行。
+ *
+ * 目前等待蓝牙串口模块到货，下一步可以把 UART0 输出接到蓝牙模块，
+ * 或者新增控制命令解析，实现无线启动、停车和参数调试。
+ */
+
+/* 直行 PID 的控制周期。每隔 20 ms 读取一次编码器增量并更新 PWM。 */
 #define CONTROL_PERIOD_MS (20)
-#define STRAIGHT_B_BASE_PWM (225)
-#define STRAIGHT_A_BASE_PWM (235)
+
+/* 左轮 B 电机、右轮 A 电机的基础 PWM。A 轮略大是为了补偿实车左右差异。 */
+#define STRAIGHT_B_BASE_PWM (300)
+#define STRAIGHT_A_BASE_PWM (310)
+
+/* PID 数据打印周期。串口打印太频繁会拖慢主循环，所以每 100 ms 打印一次。 */
 #define PID_REPORT_PERIOD_MS (100)
+
+/*
+ * 八路红外循迹模块串口打印测试开关。
+ *
+ * 1：只测试红外模块，I2C 读数后从 UART0 打印，电机不会跑。
+ * 0：关闭红外测试，恢复后面的编码器直行 PID 跑车程序。
+ */
+#define ENABLE_IR_TRACKING_UART_TEST (1)
+
+/* 红外模块测试打印周期。100 ms 适合人眼观察，也不会让串口输出太密。 */
+#define IR_TRACKING_TEST_PERIOD_MS   (100)
+
+/* 调试阶段限制 PWM 范围，避免小车突然加速过高。 */
 #define STRAIGHT_MIN_PWM  (0)
 #define STRAIGHT_MAX_PWM  (420)
+
+/* 编码器自检参数。只有小车架空时才建议把 ENABLE_ENCODER_SELF_TEST 改为 1。 */
 #define ENCODER_TEST_PWM  (260)
 #define ENCODER_TEST_MS   (500)
 #define ENCODER_MIN_PULSE (2)
 #define ENABLE_ENCODER_SELF_TEST (0)
 
+/*
+ * 直行 PID 使用整数定点计算，避免在 Cortex-M0+ 上引入浮点开销。
+ * 实际输出修正量 = (KP*误差 + KI*积分 + KD*微分) / STRAIGHT_PID_SCALE。
+ */
 #define STRAIGHT_PID_SCALE (20)
 #define STRAIGHT_PID_KP    (16)
 #define STRAIGHT_PID_KI    (1)
 #define STRAIGHT_PID_KD    (4)
+
+/* 积分限幅和修正量限幅，用来降低积分饱和和突然大幅修正。 */
 #define STRAIGHT_I_LIMIT   (120)
 #define STRAIGHT_CORR_MAX  (60)
 
 /*
- * Encoder names follow TB6612 motor channels:
- * motor A encoder uses PA16/PA17, motor B encoder uses PA14/PA15.
+ * 编码器命名跟随 TB6612 电机通道：
+ * A 电机编码器使用 PA16/PA17，B 电机编码器使用 PA14/PA15。
  */
 #define ENCODER_MOTOR_A_FORWARD_SIGN (-1)
 #define ENCODER_MOTOR_B_FORWARD_SIGN (1)
 
 typedef struct {
+    /* PID 三个系数都使用整数；最终统一除以 STRAIGHT_PID_SCALE。 */
     int32_t kp;
     int32_t ki;
     int32_t kd;
+
+    /* integral 保存历史误差累积，last_error 用来计算微分项。 */
     int32_t integral;
     int32_t last_error;
 } straight_pid_t;
 
+/* 编码器计数在 GPIO 中断里更新，所以主循环读取时必须声明为 volatile。 */
 static volatile int32_t g_motor_a_encoder_count;
 static volatile int32_t g_motor_b_encoder_count;
 static volatile uint8_t g_motor_a_encoder_state;
 static volatile uint8_t g_motor_b_encoder_state;
 
+/* 限幅函数，用于 PWM、积分限幅和 PID 修正量限幅。 */
 static int32_t clamp_i32(int32_t value, int32_t min_value, int32_t max_value)
 {
     if (value < min_value) {
@@ -58,6 +104,7 @@ static int32_t abs_i32(int32_t value)
     return (value < 0) ? -value : value;
 }
 
+/* 读取编码器 A/B 两相，压缩成 2 bit 状态：A 相为 bit1，B 相为 bit0。 */
 static uint8_t encoder_read_state(uint32_t pin_a, uint32_t pin_b)
 {
     uint32_t pins = DL_GPIO_readPins(ENCODER_PORT, pin_a | pin_b);
@@ -74,6 +121,11 @@ static uint8_t encoder_read_state(uint32_t pin_a, uint32_t pin_b)
     return state;
 }
 
+/*
+ * 解码一次正交编码器状态跳变。
+ * 下标为 previous_state << 2 | current_state，
+ * 所有 2 bit 到 2 bit 的跳变都会映射为 -1、0 或 +1。
+ */
 static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
 {
     static const int8_t transition_table[16] = {
@@ -86,24 +138,34 @@ static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
     return transition_table[((previous & 0x03U) << 2) | (current & 0x03U)];
 }
 
+/* B 电机编码器发生 GPIO 中断时调用。 */
 static void encoder_update_motor_b(void)
 {
     uint8_t current = encoder_read_state(ENCODER_MOTOR_B_A_PIN, ENCODER_MOTOR_B_B_PIN);
     int8_t delta = encoder_decode_delta(g_motor_b_encoder_state, current);
 
     g_motor_b_encoder_state = current;
+
+    /*
+     * ENCODER_MOTOR_B_FORWARD_SIGN 用来统一“前进时计数为正”的方向。
+     * 如果以后换了编码器 A/B 相顺序，可以优先改这个符号宏。
+     */
     g_motor_b_encoder_count += ((int32_t)delta * ENCODER_MOTOR_B_FORWARD_SIGN);
 }
 
+/* A 电机编码器发生 GPIO 中断时调用。 */
 static void encoder_update_motor_a(void)
 {
     uint8_t current = encoder_read_state(ENCODER_MOTOR_A_A_PIN, ENCODER_MOTOR_A_B_PIN);
     int8_t delta = encoder_decode_delta(g_motor_a_encoder_state, current);
 
     g_motor_a_encoder_state = current;
+
+    /* A 电机实测前进方向与解码表方向相反，所以当前符号为 -1。 */
     g_motor_a_encoder_count += ((int32_t)delta * ENCODER_MOTOR_A_FORWARD_SIGN);
 }
 
+/* 在开启 GPIO 中断前读取编码器初始状态。 */
 static void encoder_init_runtime(void)
 {
     g_motor_a_encoder_count = 0;
@@ -116,14 +178,21 @@ static void encoder_init_runtime(void)
         ENCODER_MOTOR_A_A_PIN | ENCODER_MOTOR_A_B_PIN);
 }
 
+/* 编码器初始状态有效后，开启 GPIOA 分组中断。 */
 static void encoder_enable_interrupts(void)
 {
     DL_GPIO_clearInterruptStatus(ENCODER_PORT,
         ENCODER_MOTOR_B_A_PIN | ENCODER_MOTOR_B_B_PIN |
         ENCODER_MOTOR_A_A_PIN | ENCODER_MOTOR_A_B_PIN);
+
+    /* GPIOA 分组中断打开后，GROUP1_IRQHandler 才会持续更新编码器计数。 */
     NVIC_EnableIRQ(ENCODER_INT_IRQN);
 }
 
+/*
+ * 返回距离上一次调用以来的编码器计数增量。
+ * 读取 volatile 计数器时会短暂关中断，避免读到一半被中断打断。
+ */
 static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
     static int32_t last_motor_b_count;
@@ -142,6 +211,7 @@ static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_de
     last_motor_a_count = motor_a_count;
 }
 
+/* 在固定时间窗口内测量编码器变化量，用于可选的编码器自检。 */
 static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
     uint32_t elapsed_ms = 0;
@@ -150,6 +220,7 @@ static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32
 
     encoder_get_delta_counts(&sample_b, &sample_a);
 
+    /* 这里不做控制，只等待指定时间，让编码器累计一段可观测的脉冲。 */
     while (elapsed_ms < ms) {
         delay_ms(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
@@ -159,6 +230,10 @@ static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32
     return abs_i32(*motor_b_delta) + abs_i32(*motor_a_delta);
 }
 
+/*
+ * 可选接线自检。
+ * 每次只转一个电机，检查对应编码器是否有计数。
+ */
 static uint8_t encoder_motor_self_test(void)
 {
     int32_t motor_b_delta;
@@ -167,6 +242,10 @@ static uint8_t encoder_motor_self_test(void)
     int32_t motor_a_abs;
     uint8_t ok = 1U;
 
+    /*
+     * 自检的判断逻辑：只让 B 电机转动时，B 编码器应该明显有计数，
+     * A 编码器不应该比 B 编码器计数更多；A 电机同理。
+     */
     lc_printf("Encoder self-test: B motor\r\n");
     TB6612_SetDifferential(ENCODER_TEST_PWM, 0);
     encoder_measure_for_ms(ENCODER_TEST_MS, &motor_b_delta, &motor_a_delta);
@@ -211,6 +290,7 @@ static uint8_t encoder_motor_self_test(void)
     return ok;
 }
 
+/* 进入直行闭环控制前，重置 PID 运行状态。 */
 static void straight_pid_reset(straight_pid_t *pid)
 {
     pid->kp = STRAIGHT_PID_KP;
@@ -220,6 +300,10 @@ static void straight_pid_reset(straight_pid_t *pid)
     pid->last_error = 0;
 }
 
+/*
+ * PID 目标：让 B 电机速度等于 A 电机速度。
+ * correction 为正表示 B 轮更快，因此会降低 B 轮 PWM、提高 A 轮 PWM。
+ */
 static int32_t straight_pid_update(straight_pid_t *pid,
     int32_t motor_b_speed,
     int32_t motor_a_speed,
@@ -235,6 +319,11 @@ static int32_t straight_pid_update(straight_pid_t *pid,
     int32_t d_term;
     int32_t output;
 
+    /*
+     * err = B_spd - A_spd：
+     * err > 0 表示左轮 B 比右轮 A 快，需要降低 B、提高 A；
+     * err < 0 表示右轮 A 比左轮 B 快，需要提高 B、降低 A。
+     */
     pid->integral = clamp_i32(pid->integral + error, -STRAIGHT_I_LIMIT, STRAIGHT_I_LIMIT);
     pid->last_error = error;
 
@@ -252,6 +341,7 @@ static int32_t straight_pid_update(straight_pid_t *pid,
     return clamp_i32(output, -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
 }
 
+/* 主电机闭环任务。该函数会一直运行，并每 100 ms 打印一次 PID 数据。 */
 static void run_motor_pid_stream(void)
 {
     straight_pid_t pid;
@@ -261,6 +351,8 @@ static void run_motor_pid_stream(void)
     int32_t motor_a_delta;
 
     straight_pid_reset(&pid);
+
+    /* 先清掉第一次读取的历史增量，避免启动瞬间把旧计数当作速度。 */
     encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
     TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
     lc_printf("PID motor stream start: B_base=%d A_base=%d period=%dms report=%dms\r\n",
@@ -283,6 +375,7 @@ static void run_motor_pid_stream(void)
         elapsed_ms += CONTROL_PERIOD_MS;
         report_elapsed_ms += CONTROL_PERIOD_MS;
 
+        /* 用 20 ms 时间窗口内的编码器增量作为简化速度估计。 */
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         motor_b_speed = abs_i32(motor_b_delta);
         motor_a_speed = abs_i32(motor_a_delta);
@@ -290,11 +383,17 @@ static void run_motor_pid_stream(void)
         correction = straight_pid_update(&pid,
             motor_b_speed, motor_a_speed,
             &error, &p_term, &i_term, &d_term);
+
+        /*
+         * correction 为正时，说明 B 轮偏快，所以 B_pwm 减小、A_pwm 增大；
+         * correction 为负时，说明 A 轮偏快，所以 B_pwm 增大、A_pwm 减小。
+         */
         motor_b_pwm = clamp_i32(STRAIGHT_B_BASE_PWM - correction,
             STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
         motor_a_pwm = clamp_i32(STRAIGHT_A_BASE_PWM + correction,
             STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
 
+        /* TB6612_SetDifferential(left, right)：左轮对应 B 电机，右轮对应 A 电机。 */
         TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
 
         if (report_elapsed_ms >= PID_REPORT_PERIOD_MS) {
@@ -309,8 +408,43 @@ static void run_motor_pid_stream(void)
     }
 }
 
+/* 八路红外循迹模块测试：I2C 读取模块数据，再通过调试串口打印。 */
+static void run_ir_tracking_uart_test(void)
+{
+    ir_tracking_sample_t sample;
+    uint32_t elapsed_ms = 0;
+
+    IRTracking_Init();
+
+    /* 红外测试只验证传感器读数，电机保持刹车，避免调试时小车移动。 */
+    TB6612_Brake();
+
+    lc_printf("\r\nIR tracking UART test start\r\n");
+    lc_printf("I2C: addr=0x%02X reg=0x%02X SDA=PB3 SCL=PB2 period=%dms\r\n",
+        IR_TRACKING_I2C_ADDR, IR_TRACKING_DATA_REG, IR_TRACKING_TEST_PERIOD_MS);
+    lc_printf("raw bit7..bit0 = X1..X8, mask bit0..bit7 = X1..X8 black line\r\n");
+    lc_printf("error: left negative, center zero, right positive\r\n");
+
+    while (1) {
+        /*
+         * IRTracking_ReadSample() 完成一次完整采样：
+         * I2C 读取原始字节 -> 转换黑线掩码 -> 计算位置误差。
+         */
+        if (IRTracking_ReadSample(&sample) != 0U) {
+            lc_printf("IR t=%lu ", elapsed_ms);
+            IRTracking_PrintSample(&sample);
+        } else {
+            lc_printf("IR t=%lu read failed, check VCC/GND/SDA/SCL/I2C address\r\n", elapsed_ms);
+        }
+
+        delay_ms(IR_TRACKING_TEST_PERIOD_MS);
+        elapsed_ms += IR_TRACKING_TEST_PERIOD_MS;
+    }
+}
+
 int main(void)
 {
+    /* SysConfig 初始化时钟、GPIO、PWM、UART、I2C 和中断路由。 */
     SYSCFG_DL_init();
     lc_printf("\r\nBOOT: UART OK, straight PID firmware\r\n");
     delay_ms(200);
@@ -323,6 +457,15 @@ int main(void)
     lc_printf("BOOT: TB6612 ready, A motor and B motor enabled\r\n");
     delay_ms(1000);
 
+#if ENABLE_IR_TRACKING_UART_TEST
+    /*
+     * 当前默认进入红外模块串口打印测试。
+     * 想重新跑直行 PID 时，把 ENABLE_IR_TRACKING_UART_TEST 改为 0 后重新编译烧录。
+     */
+    run_ir_tracking_uart_test();
+#endif
+
+    /* 默认关闭自检；只有小车架空时才建议打开。 */
     if ((ENABLE_ENCODER_SELF_TEST != 0) && (encoder_motor_self_test() == 0U)) {
         lc_printf("Self-test failed. Fix wiring/direction before PID run.\r\n");
         while (1) {
@@ -337,6 +480,7 @@ int main(void)
     }
 }
 
+/* GPIOA 中断服务函数，负责处理所有编码器引脚。 */
 void GROUP1_IRQHandler(void)
 {
     uint32_t status = DL_GPIO_getEnabledInterruptStatus(ENCODER_PORT,

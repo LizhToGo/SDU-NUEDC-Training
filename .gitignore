@@ -1,17 +1,17 @@
-# Local editor settings
+# 本地编辑器配置
 .vscode/
 
-# CCS / Eclipse build output directories
+# CCS / Eclipse 编译输出目录
 /Debug/
 /Release/
 /build/
 
-# Object files and dependency files
+# 目标文件和依赖文件
 *.o
 *.obj
 *.d
 
-# Linker / firmware output
+# 链接和固件输出文件
 *.out
 *.elf
 *.hex
@@ -19,7 +19,7 @@
 *.map
 *_linkInfo.xml
 
-# Generated make/build helper files
+# 自动生成的 make/build 辅助文件
 makefile
 objects.mk
 sources.mk
@@ -28,12 +28,12 @@ subdir_vars.mk
 *.opt
 *.genlibs
 
-# Clangd cache
+# clangd 缓存
 .clangd
 .clangd/
 **/.clangd/
 
-# OS noise
+# 操作系统临时文件
 Thumbs.db
 .DS_Store
 
