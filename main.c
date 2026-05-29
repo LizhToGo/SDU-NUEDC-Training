@@ -33,10 +33,20 @@
  * 1：只测试红外模块，I2C 读数后从 UART0 打印，电机不会跑。
  * 0：关闭红外测试，恢复后面的编码器直行 PID 跑车程序。
  */
-#define ENABLE_IR_TRACKING_UART_TEST (1)
+#define ENABLE_IR_TRACKING_UART_TEST (0)
 
 /* 红外模块测试打印周期。100 ms 适合人眼观察，也不会让串口输出太密。 */
 #define IR_TRACKING_TEST_PERIOD_MS   (100)
+
+#define ENABLE_LINE_FOLLOW_TEST      (1)
+#define LINE_FOLLOW_PERIOD_MS        (20)
+#define LINE_FOLLOW_REPORT_PERIOD_MS (300)
+#define LINE_FOLLOW_BASE_PWM         (480)
+#define LINE_FOLLOW_MIN_PWM          (0)
+#define LINE_FOLLOW_MAX_PWM          (820)
+#define LINE_FOLLOW_TURN_DIVISOR     (11)
+#define LINE_FOLLOW_TURN_LIMIT       (420)
+#define LINE_FOLLOW_TURN_SIGN        (1)
 
 /* 调试阶段限制 PWM 范围，避免小车突然加速过高。 */
 #define STRAIGHT_MIN_PWM  (0)
@@ -409,6 +419,92 @@ static void run_motor_pid_stream(void)
 }
 
 /* 八路红外循迹模块测试：I2C 读取模块数据，再通过调试串口打印。 */
+static int32_t line_follow_calculate_turn(int32_t error)
+{
+    int32_t turn = (error * LINE_FOLLOW_TURN_SIGN) / LINE_FOLLOW_TURN_DIVISOR;
+
+    return clamp_i32(turn, -LINE_FOLLOW_TURN_LIMIT, LINE_FOLLOW_TURN_LIMIT);
+}
+
+static void run_line_follow_test(void)
+{
+    ir_tracking_sample_t sample;
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+
+    IRTracking_Init();
+    TB6612_Brake();
+    delay_ms(300);
+
+    lc_printf("\r\nIR line follow start\r\n");
+    lc_printf("base=%d max=%d turn_div=%d turn_limit=%d report=%dms\r\n",
+        LINE_FOLLOW_BASE_PWM,
+        LINE_FOLLOW_MAX_PWM,
+        LINE_FOLLOW_TURN_DIVISOR,
+        LINE_FOLLOW_TURN_LIMIT,
+        LINE_FOLLOW_REPORT_PERIOD_MS);
+    lc_printf("L=base+turn R=base-turn, err<0 line left, err>0 line right\r\n");
+
+    while (1) {
+        int32_t turn;
+        int32_t left_pwm;
+        int32_t right_pwm;
+
+        delay_ms(LINE_FOLLOW_PERIOD_MS);
+        elapsed_ms += LINE_FOLLOW_PERIOD_MS;
+        report_elapsed_ms += LINE_FOLLOW_PERIOD_MS;
+
+        if (IRTracking_ReadSample(&sample) == 0U) {
+            TB6612_Brake();
+
+            if (report_elapsed_ms >= LINE_FOLLOW_REPORT_PERIOD_MS) {
+                report_elapsed_ms = 0;
+                lc_printf("LINE t=%lu read_fail=1 L=0 R=0 brake=1\r\n", elapsed_ms);
+            }
+
+            continue;
+        }
+
+        if (sample.line_lost != 0U) {
+            TB6612_Brake();
+
+            if (report_elapsed_ms >= LINE_FOLLOW_REPORT_PERIOD_MS) {
+                report_elapsed_ms = 0;
+                lc_printf("LINE t=%lu raw=0x%02X mask=0x%02X cnt=%u lost=1 err=%d L=0 R=0 brake=1\r\n",
+                    elapsed_ms,
+                    sample.raw,
+                    sample.line_mask,
+                    sample.active_count,
+                    sample.error);
+            }
+
+            continue;
+        }
+
+        turn = line_follow_calculate_turn(sample.error);
+        left_pwm = clamp_i32(LINE_FOLLOW_BASE_PWM + turn,
+            LINE_FOLLOW_MIN_PWM, LINE_FOLLOW_MAX_PWM);
+        right_pwm = clamp_i32(LINE_FOLLOW_BASE_PWM - turn,
+            LINE_FOLLOW_MIN_PWM, LINE_FOLLOW_MAX_PWM);
+
+        TB6612_SetDifferential((int16_t)left_pwm, (int16_t)right_pwm);
+
+        if (report_elapsed_ms >= LINE_FOLLOW_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            lc_printf("LINE t=%lu raw=0x%02X mask=0x%02X cnt=%u lost=0 err=%d target=%ld turn=%ld L=%ld R=%ld\r\n",
+                elapsed_ms,
+                sample.raw,
+                sample.line_mask,
+                sample.active_count,
+                sample.error,
+                turn,
+                turn,
+                left_pwm,
+                right_pwm);
+        }
+    }
+}
+
 static void run_ir_tracking_uart_test(void)
 {
     ir_tracking_sample_t sample;
@@ -446,7 +542,7 @@ int main(void)
 {
     /* SysConfig 初始化时钟、GPIO、PWM、UART、I2C 和中断路由。 */
     SYSCFG_DL_init();
-    lc_printf("\r\nBOOT: UART OK, straight PID firmware\r\n");
+    lc_printf("\r\nBOOT: UART OK, IR line follow firmware\r\n");
     delay_ms(200);
 
     encoder_init_runtime();
@@ -456,6 +552,10 @@ int main(void)
     TB6612_Init();
     lc_printf("BOOT: TB6612 ready, A motor and B motor enabled\r\n");
     delay_ms(1000);
+
+#if ENABLE_LINE_FOLLOW_TEST
+    run_line_follow_test();
+#endif
 
 #if ENABLE_IR_TRACKING_UART_TEST
     /*
