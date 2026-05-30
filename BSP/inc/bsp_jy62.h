@@ -418,6 +418,42 @@ static uint32_t JY62_GetNavigation(jy62_navigation_t *nav)
     return frame_delta;
 }
 
+static uint8_t JY62_PeekNavigation(jy62_navigation_t *nav)
+{
+    jy62_sample_t sample;
+    int32_t gyro_z_filtered_raw;
+    int32_t yaw_zero_cdeg;
+    uint8_t yaw_zero_valid;
+
+    __disable_irq();
+    sample = g_jy62_sample;
+    gyro_z_filtered_raw = g_jy62_gyro_z_filtered_raw;
+    yaw_zero_cdeg = g_jy62_yaw_zero_cdeg;
+    yaw_zero_valid = g_jy62_yaw_zero_valid;
+    __enable_irq();
+
+    if (nav != 0) {
+        nav->yaw_cdeg = JY62_RawToAngleCdeg(sample.angle_raw[2]);
+        nav->yaw_zero_cdeg = yaw_zero_cdeg;
+        nav->yaw_relative_cdeg = JY62_NormalizeAngleCdeg(nav->yaw_cdeg - yaw_zero_cdeg);
+        nav->gyro_z_mdps = JY62_RawToGyroMdps(sample.gyro_raw[2]);
+        nav->gyro_z_filtered_mdps = JY62_RawToGyroMdps((int16_t)gyro_z_filtered_raw);
+        nav->roll_cdeg = JY62_RawToAngleCdeg(sample.angle_raw[0]);
+        nav->pitch_cdeg = JY62_RawToAngleCdeg(sample.angle_raw[1]);
+        nav->valid = (((sample.received_flags & JY62_NAV_REQUIRED_FLAGS) == JY62_NAV_REQUIRED_FLAGS) &&
+            (yaw_zero_valid != 0U)) ? 1U : 0U;
+        nav->update_flags = sample.update_flags;
+        nav->rx_byte_count = sample.rx_byte_count;
+        nav->header_count = sample.header_count;
+        nav->frame_count = sample.frame_count;
+        nav->checksum_error = sample.checksum_error;
+        nav->uart_error_count = sample.uart_error_count;
+        nav->overrun_count = sample.overrun_count;
+    }
+
+    return (nav != 0) ? nav->valid : 0U;
+}
+
 static void JY62_UART1_IRQHandler(void)
 {
     DL_UART_IIDX pending;

@@ -21,6 +21,7 @@ const PWM1   = PWM.addInstance();
 const SYSCTL = scripting.addModule("/ti/driverlib/SYSCTL");
 const UART   = scripting.addModule("/ti/driverlib/UART", {}, false);
 const UART1  = UART.addInstance();
+const UART2  = UART.addInstance();
 
 /**
  * Write custom configuration values to the imported modules.
@@ -173,6 +174,18 @@ UART1.txPinConfig.internalResistor = "PULL_UP";
 UART1.rxPinConfig.$name            = "ti_driverlib_gpio_GPIOPinGeneric1";
 UART1.rxPinConfig.enableConfig     = true;
 UART1.rxPinConfig.internalResistor = "PULL_UP";
+
+UART2.$name                        = "UART_1";
+UART2.targetBaudRate               = 115200;
+UART2.peripheral.$assign           = "UART1";
+UART2.peripheral.txPin.$assign     = "PA8";
+UART2.peripheral.rxPin.$assign     = "PA9";
+UART2.txPinConfig.$name            = "ti_driverlib_gpio_GPIOPinGeneric6";
+UART2.txPinConfig.enableConfig     = true;
+UART2.txPinConfig.internalResistor = "PULL_UP";
+UART2.rxPinConfig.$name            = "ti_driverlib_gpio_GPIOPinGeneric7";
+UART2.rxPinConfig.enableConfig     = true;
+UART2.rxPinConfig.internalResistor = "PULL_UP";
 
 /**
  * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future

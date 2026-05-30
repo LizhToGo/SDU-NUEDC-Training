@@ -2,6 +2,7 @@
 #include "board.h"
 #include "bsp_tb6612.h"
 #include "bsp_ir_tracking.h"
+#include "bsp_jy62.h"
 
 /*
  * 当前主程序说明：
@@ -21,8 +22,8 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 左轮 B 电机、右轮 A 电机的基础 PWM。A 轮略大是为了补偿实车左右差异。 */
-#define STRAIGHT_B_BASE_PWM (300)
-#define STRAIGHT_A_BASE_PWM (310)
+#define STRAIGHT_B_BASE_PWM (290)
+#define STRAIGHT_A_BASE_PWM (330)
 
 /* PID 数据打印周期。串口打印太频繁会拖慢主循环，所以每 100 ms 打印一次。 */
 #define PID_REPORT_PERIOD_MS (100)
@@ -38,7 +39,12 @@
 /* 红外模块测试打印周期。100 ms 适合人眼观察，也不会让串口输出太密。 */
 #define IR_TRACKING_TEST_PERIOD_MS   (100)
 
-#define ENABLE_LINE_FOLLOW_TEST      (1)
+#define ENABLE_CONTEST_TASKS         (1)
+#define ENABLE_LINE_FOLLOW_TEST      (0)
+#define ENABLE_JY62_NAV             (1)
+#define JY62_BOOT_ZERO_DELAY_MS      (300)
+#define JY62_IDLE_REPORT_PERIOD_MS   (500)
+#define JY62_TASK_REPORT_PERIOD_MS   (500)
 #define LINE_FOLLOW_PERIOD_MS        (20)
 #define LINE_FOLLOW_REPORT_PERIOD_MS (300)
 #define LINE_FOLLOW_BASE_PWM         (480)
@@ -52,6 +58,21 @@
 #define STRAIGHT_MIN_PWM  (0)
 #define STRAIGHT_MAX_PWM  (420)
 
+#define TASK_BUTTON_DEBOUNCE_MS       (30)
+#define TASK_BUTTON_IDLE_MS           (10)
+#define TASK1_START_ALARM_MS          (120)
+#define TASK1_FINISH_ALARM_MS         (120)
+#define TASK1_REPORT_PERIOD_MS        (100)
+#define TASK1_MAX_RUN_MS              (15000)
+/* Start looking for the B-point black line after the car is close enough to B. */
+#define TASK1_B_LINE_ARM_COUNT        (6500)
+/* If the B-point line is missed, keep going a little farther and then stop. */
+#define TASK1_FORCE_STOP_COUNT        (9500)
+#define TASK1_STOP_MIN_IR_COUNT       (1)
+
+/* ST011 trigger is treated as active-low: idle high, short low pulse to notify. */
+#define ST011_ACTIVE_LOW              (1)
+
 /* 编码器自检参数。只有小车架空时才建议把 ENABLE_ENCODER_SELF_TEST 改为 1。 */
 #define ENCODER_TEST_PWM  (260)
 #define ENCODER_TEST_MS   (500)
@@ -63,13 +84,19 @@
  * 实际输出修正量 = (KP*误差 + KI*积分 + KD*微分) / STRAIGHT_PID_SCALE。
  */
 #define STRAIGHT_PID_SCALE (20)
-#define STRAIGHT_PID_KP    (16)
-#define STRAIGHT_PID_KI    (1)
-#define STRAIGHT_PID_KD    (4)
+#define STRAIGHT_PID_KP    (22)
+#define STRAIGHT_PID_KI    (2)
+#define STRAIGHT_PID_KD    (6)
 
 /* 积分限幅和修正量限幅，用来降低积分饱和和突然大幅修正。 */
-#define STRAIGHT_I_LIMIT   (120)
-#define STRAIGHT_CORR_MAX  (60)
+#define STRAIGHT_I_LIMIT   (180)
+#define STRAIGHT_CORR_MAX  (80)
+
+#define TASK1_DISTANCE_CORR_DIVISOR (28)
+#define TASK1_DISTANCE_CORR_MAX     (45)
+#define TASK1_HEADING_CORR_DIVISOR  (40)
+#define TASK1_HEADING_CORR_MAX      (25)
+#define TASK1_HEADING_CORR_SIGN     (-1)
 
 /*
  * 编码器命名跟随 TB6612 电机通道：
@@ -94,6 +121,7 @@ static volatile int32_t g_motor_a_encoder_count;
 static volatile int32_t g_motor_b_encoder_count;
 static volatile uint8_t g_motor_a_encoder_state;
 static volatile uint8_t g_motor_b_encoder_state;
+static uint8_t g_jy62_zero_ready;
 
 /* 限幅函数，用于 PWM、积分限幅和 PID 修正量限幅。 */
 static int32_t clamp_i32(int32_t value, int32_t min_value, int32_t max_value)
@@ -112,6 +140,129 @@ static int32_t clamp_i32(int32_t value, int32_t min_value, int32_t max_value)
 static int32_t abs_i32(int32_t value)
 {
     return (value < 0) ? -value : value;
+}
+
+static void st011_set_active(uint8_t active)
+{
+#if ST011_ACTIVE_LOW
+    if (active != 0U) {
+        DL_GPIO_clearPins(ST011_PORT, ST011_TRIG_PIN);
+    } else {
+        DL_GPIO_setPins(ST011_PORT, ST011_TRIG_PIN);
+    }
+#else
+    if (active != 0U) {
+        DL_GPIO_setPins(ST011_PORT, ST011_TRIG_PIN);
+    } else {
+        DL_GPIO_clearPins(ST011_PORT, ST011_TRIG_PIN);
+    }
+#endif
+}
+
+static void st011_pulse(uint32_t pulse_ms)
+{
+    st011_set_active(1U);
+    delay_ms(pulse_ms);
+    st011_set_active(0U);
+}
+
+static uint8_t task_button_is_pressed(void)
+{
+    return ((DL_GPIO_readPins(KEYS_PORT, KEYS_KEY2_PIN) & KEYS_KEY2_PIN) == 0U) ? 1U : 0U;
+}
+
+static void jy62_print_navigation_line(const char *mode, uint32_t elapsed_ms)
+{
+#if ENABLE_JY62_NAV
+    jy62_navigation_t nav;
+    uint32_t frame_delta = JY62_GetNavigation(&nav);
+
+    if ((g_jy62_zero_ready == 0U) && (nav.valid != 0U)) {
+        JY62_SetYawZeroToCurrent();
+        g_jy62_zero_ready = 1U;
+        frame_delta = JY62_GetNavigation(&nav);
+    }
+
+    lc_printf("JY62 mode=%s t=%lu df=%lu ok=%u flags=0x%02X yaw_cdeg=%ld rel_cdeg=%ld gz_mdps=%ld gzlp_mdps=%ld rx=%lu head=%lu frames=%lu err=%lu/%lu/%lu\r\n",
+        mode,
+        elapsed_ms,
+        frame_delta,
+        nav.valid,
+        nav.update_flags,
+        nav.yaw_cdeg,
+        nav.yaw_relative_cdeg,
+        nav.gyro_z_mdps,
+        nav.gyro_z_filtered_mdps,
+        nav.rx_byte_count,
+        nav.header_count,
+        nav.frame_count,
+        nav.checksum_error,
+        nav.uart_error_count,
+        nav.overrun_count);
+#else
+    (void)mode;
+    (void)elapsed_ms;
+#endif
+}
+
+static uint8_t jy62_zero_to_current(const char *mode, uint32_t elapsed_ms)
+{
+#if ENABLE_JY62_NAV
+    jy62_navigation_t nav;
+
+    (void)JY62_GetNavigation(&nav);
+    if (nav.valid != 0U) {
+        JY62_SetYawZeroToCurrent();
+        g_jy62_zero_ready = 1U;
+        jy62_print_navigation_line(mode, elapsed_ms);
+        return 1U;
+    }
+
+    lc_printf("JY62 mode=%s t=%lu zero=0 ok=%u rx=%lu head=%lu frames=%lu err=%lu/%lu/%lu\r\n",
+        mode,
+        elapsed_ms,
+        nav.valid,
+        nav.rx_byte_count,
+        nav.header_count,
+        nav.frame_count,
+        nav.checksum_error,
+        nav.uart_error_count,
+        nav.overrun_count);
+    return 0U;
+#else
+    (void)mode;
+    (void)elapsed_ms;
+    return 0U;
+#endif
+}
+
+static void wait_task_button_press(void)
+{
+    uint32_t elapsed_ms = 0;
+    uint32_t jy62_elapsed_ms = 0;
+
+    while (1) {
+        if (task_button_is_pressed() != 0U) {
+            delay_ms(TASK_BUTTON_DEBOUNCE_MS);
+            if (task_button_is_pressed() != 0U) {
+                while (task_button_is_pressed() != 0U) {
+                    delay_ms(TASK_BUTTON_IDLE_MS);
+                }
+                delay_ms(TASK_BUTTON_DEBOUNCE_MS);
+                return;
+            }
+        }
+
+        TB6612_Brake();
+        delay_ms(TASK_BUTTON_IDLE_MS);
+        elapsed_ms += TASK_BUTTON_IDLE_MS;
+        jy62_elapsed_ms += TASK_BUTTON_IDLE_MS;
+
+        if (jy62_elapsed_ms >= JY62_IDLE_REPORT_PERIOD_MS) {
+            jy62_elapsed_ms = 0;
+            jy62_print_navigation_line("idle", elapsed_ms);
+        }
+    }
 }
 
 /* 读取编码器 A/B 两相，压缩成 2 bit 状态：A 相为 bit1，B 相为 bit0。 */
@@ -219,6 +370,29 @@ static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_de
     *motor_a_delta = motor_a_count - last_motor_a_count;
     last_motor_b_count = motor_b_count;
     last_motor_a_count = motor_a_count;
+}
+
+static void encoder_get_total_counts(int32_t *motor_b_total, int32_t *motor_a_total)
+{
+    __disable_irq();
+    *motor_b_total = g_motor_b_encoder_count;
+    *motor_a_total = g_motor_a_encoder_count;
+    __enable_irq();
+}
+
+static void encoder_reset_distance_counts(void)
+{
+    int32_t dummy_b;
+    int32_t dummy_a;
+
+    __disable_irq();
+    g_motor_b_encoder_count = 0;
+    g_motor_a_encoder_count = 0;
+    g_motor_b_encoder_state = encoder_read_state(ENCODER_MOTOR_B_A_PIN, ENCODER_MOTOR_B_B_PIN);
+    g_motor_a_encoder_state = encoder_read_state(ENCODER_MOTOR_A_A_PIN, ENCODER_MOTOR_A_B_PIN);
+    __enable_irq();
+
+    encoder_get_delta_counts(&dummy_b, &dummy_a);
 }
 
 /* 在固定时间窗口内测量编码器变化量，用于可选的编码器自检。 */
@@ -505,6 +679,179 @@ static void run_line_follow_test(void)
     }
 }
 
+static void run_task1_ab(void)
+{
+    straight_pid_t pid;
+    ir_tracking_sample_t sample;
+    jy62_navigation_t nav;
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    uint32_t jy62_report_elapsed_ms = 0;
+    int32_t motor_b_delta;
+    int32_t motor_a_delta;
+    uint8_t ir_ok = 0U;
+    uint8_t stop_reason = 0U;
+    uint8_t stop_nav_ok;
+
+    TB6612_Brake();
+    st011_pulse(TASK1_START_ALARM_MS);
+    (void)jy62_zero_to_current("task1_zero", 0);
+
+    IRTracking_Init();
+    straight_pid_reset(&pid);
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+
+    TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
+
+    while (elapsed_ms < TASK1_MAX_RUN_MS) {
+        int32_t motor_b_speed;
+        int32_t motor_a_speed;
+        int32_t motor_b_total;
+        int32_t motor_a_total;
+        int32_t distance_count;
+        int32_t error;
+        int32_t p_term;
+        int32_t i_term;
+        int32_t d_term;
+        int32_t speed_correction;
+        int32_t distance_error;
+        int32_t distance_correction;
+        int32_t heading_error;
+        int32_t heading_correction;
+        int32_t correction;
+        int32_t motor_b_pwm;
+        int32_t motor_a_pwm;
+        uint8_t nav_ok;
+        uint8_t ir_armed;
+
+        delay_ms(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+        jy62_report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+
+        motor_b_speed = abs_i32(motor_b_delta);
+        motor_a_speed = abs_i32(motor_a_delta);
+        distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+        ir_armed = (distance_count >= TASK1_B_LINE_ARM_COUNT) ? 1U : 0U;
+        nav_ok = JY62_PeekNavigation(&nav);
+        heading_error = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
+        heading_correction = clamp_i32((heading_error * TASK1_HEADING_CORR_SIGN) / TASK1_HEADING_CORR_DIVISOR,
+            -TASK1_HEADING_CORR_MAX, TASK1_HEADING_CORR_MAX);
+
+        ir_ok = IRTracking_ReadSample(&sample);
+        if ((ir_armed != 0U) &&
+            (ir_ok != 0U) &&
+            (sample.line_lost == 0U) &&
+            (sample.active_count >= TASK1_STOP_MIN_IR_COUNT)) {
+            stop_reason = 1U;
+            break;
+        }
+
+        if (distance_count >= TASK1_FORCE_STOP_COUNT) {
+            stop_reason = 2U;
+            break;
+        }
+
+        speed_correction = straight_pid_update(&pid,
+            motor_b_speed, motor_a_speed,
+            &error, &p_term, &i_term, &d_term);
+        distance_error = motor_b_total - motor_a_total;
+        distance_correction = clamp_i32(distance_error / TASK1_DISTANCE_CORR_DIVISOR,
+            -TASK1_DISTANCE_CORR_MAX, TASK1_DISTANCE_CORR_MAX);
+        correction = clamp_i32(speed_correction + distance_correction + heading_correction,
+            -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
+
+        motor_b_pwm = clamp_i32(STRAIGHT_B_BASE_PWM - correction,
+            STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
+        motor_a_pwm = clamp_i32(STRAIGHT_A_BASE_PWM + correction,
+            STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
+
+        TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
+
+        if (report_elapsed_ms >= TASK1_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            lc_printf("TASK1 t=%lu dist=%ld arm=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u h_err=%ld h_corr=%ld B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
+                elapsed_ms,
+                distance_count,
+                ir_armed,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                ir_ok,
+                nav_ok,
+                heading_error,
+                heading_correction,
+                motor_b_total,
+                motor_a_total,
+                distance_error,
+                distance_correction,
+                motor_b_speed,
+                motor_a_speed,
+                error,
+                p_term,
+                i_term,
+                d_term,
+                speed_correction,
+                correction,
+                motor_b_pwm,
+                motor_a_pwm);
+        }
+
+        if (jy62_report_elapsed_ms >= JY62_TASK_REPORT_PERIOD_MS) {
+            jy62_report_elapsed_ms = 0;
+            jy62_print_navigation_line("task1", elapsed_ms);
+        }
+    }
+
+    TB6612_Brake();
+    encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
+    encoder_get_total_counts(&motor_b_delta, &motor_a_delta);
+    stop_nav_ok = JY62_PeekNavigation(&nav);
+    lc_printf("TASK1 stop: reason=%s t=%lu dist=%ld arm=%d force=%d raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u rel_cdeg=%ld B_total=%ld A_total=%ld\r\n",
+        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : "timeout"),
+        elapsed_ms,
+        (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
+        TASK1_B_LINE_ARM_COUNT,
+        TASK1_FORCE_STOP_COUNT,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        ir_ok,
+        stop_nav_ok,
+        nav.yaw_relative_cdeg,
+        motor_b_delta,
+        motor_a_delta);
+    st011_pulse(TASK1_FINISH_ALARM_MS);
+}
+
+static void run_task_dispatcher(void)
+{
+    uint32_t task_count = 0;
+
+    st011_set_active(0U);
+    TB6612_Brake();
+    lc_printf("TASK ready: press PB21/KEY2. press 1=task1 A->B straight PID\r\n");
+
+    while (1) {
+        wait_task_button_press();
+        task_count++;
+
+        if (task_count == 1U) {
+            run_task1_ab();
+        } else {
+            TB6612_Brake();
+            st011_pulse(TASK1_START_ALARM_MS);
+            lc_printf("TASK%lu not implemented yet\r\n", task_count);
+        }
+    }
+}
+
 static void run_ir_tracking_uart_test(void)
 {
     ir_tracking_sample_t sample;
@@ -542,7 +889,18 @@ int main(void)
 {
     /* SysConfig 初始化时钟、GPIO、PWM、UART、I2C 和中断路由。 */
     SYSCFG_DL_init();
+    st011_set_active(0U);
     lc_printf("\r\nBOOT: UART OK, IR line follow firmware\r\n");
+
+#if ENABLE_JY62_NAV
+    JY62_Init();
+    g_jy62_zero_ready = 0U;
+    lc_printf("BOOT: JY62 UART1 ready, PA08 TX -> RXD, PA09 RX <- TXD, baud=%lu\r\n",
+        (uint32_t)JY62_UART_BAUD_RATE);
+    delay_ms(JY62_BOOT_ZERO_DELAY_MS);
+    (void)jy62_zero_to_current("boot_zero", JY62_BOOT_ZERO_DELAY_MS);
+#endif
+
     delay_ms(200);
 
     encoder_init_runtime();
@@ -551,19 +909,20 @@ int main(void)
 
     TB6612_Init();
     lc_printf("BOOT: TB6612 ready, A motor and B motor enabled\r\n");
+    st011_set_active(0U);
     delay_ms(1000);
 
-#if ENABLE_LINE_FOLLOW_TEST
+#if ENABLE_CONTEST_TASKS
+    run_task_dispatcher();
+#elif ENABLE_LINE_FOLLOW_TEST
     run_line_follow_test();
-#endif
-
-#if ENABLE_IR_TRACKING_UART_TEST
+#elif ENABLE_IR_TRACKING_UART_TEST
     /*
      * 当前默认进入红外模块串口打印测试。
      * 想重新跑直行 PID 时，把 ENABLE_IR_TRACKING_UART_TEST 改为 0 后重新编译烧录。
      */
     run_ir_tracking_uart_test();
-#endif
+#else
 
     /* 默认关闭自检；只有小车架空时才建议打开。 */
     if ((ENABLE_ENCODER_SELF_TEST != 0) && (encoder_motor_self_test() == 0U)) {
@@ -575,6 +934,7 @@ int main(void)
     }
 
     run_motor_pid_stream();
+#endif
 
     while (1) {
     }
@@ -597,3 +957,10 @@ void GROUP1_IRQHandler(void)
 
     DL_GPIO_clearInterruptStatus(ENCODER_PORT, status);
 }
+
+#if ENABLE_JY62_NAV
+void UART_1_INST_IRQHandler(void)
+{
+    JY62_UART1_IRQHandler();
+}
+#endif
