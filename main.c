@@ -22,8 +22,8 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 左轮 B 电机、右轮 A 电机的基础 PWM。A 轮略大是为了补偿实车左右差异。 */
-#define STRAIGHT_B_BASE_PWM (290)
-#define STRAIGHT_A_BASE_PWM (330)
+#define STRAIGHT_B_BASE_PWM (410)
+#define STRAIGHT_A_BASE_PWM (450)
 
 /* PID 数据打印周期。串口打印太频繁会拖慢主循环，所以每 100 ms 打印一次。 */
 #define PID_REPORT_PERIOD_MS (100)
@@ -56,16 +56,21 @@
 
 /* 调试阶段限制 PWM 范围，避免小车突然加速过高。 */
 #define STRAIGHT_MIN_PWM  (0)
-#define STRAIGHT_MAX_PWM  (420)
+#define STRAIGHT_MAX_PWM  (520)
 
 #define TASK_BUTTON_DEBOUNCE_MS       (30)
 #define TASK_BUTTON_IDLE_MS           (10)
 #define TASK1_START_ALARM_MS          (120)
 #define TASK1_FINISH_ALARM_MS         (120)
+#define TASK1_START_SETTLE_MS         (250)
+#define TASK1_AFTER_ZERO_DELAY_MS     (100)
+#define TASK1_START_RAMP_MS           (400)
+#define TASK1_RAMP_B_START_PWM        (370)
+#define TASK1_RAMP_A_START_PWM        (410)
 #define TASK1_REPORT_PERIOD_MS        (100)
 #define TASK1_MAX_RUN_MS              (15000)
 /* Start looking for the B-point black line after the car is close enough to B. */
-#define TASK1_B_LINE_ARM_COUNT        (6500)
+#define TASK1_B_LINE_ARM_COUNT        (6000)
 /* If the B-point line is missed, keep going a little farther and then stop. */
 #define TASK1_FORCE_STOP_COUNT        (9500)
 #define TASK1_STOP_MIN_IR_COUNT       (1)
@@ -94,9 +99,12 @@
 
 #define TASK1_DISTANCE_CORR_DIVISOR (28)
 #define TASK1_DISTANCE_CORR_MAX     (45)
-#define TASK1_HEADING_CORR_DIVISOR  (40)
+#define TASK1_HEADING_CORR_DIVISOR  (35)
 #define TASK1_HEADING_CORR_MAX      (25)
 #define TASK1_HEADING_CORR_SIGN     (-1)
+#define TASK1_HEADING_PRIORITY_CDEG (250)
+#define TASK1_HEADING_PRIORITY_MAX_VERR (18)
+#define TASK1_HEADING_PRIORITY_MAX_DERR (240)
 
 /*
  * 编码器命名跟随 TB6612 电机通道：
@@ -135,6 +143,15 @@ static int32_t clamp_i32(int32_t value, int32_t min_value, int32_t max_value)
     }
 
     return value;
+}
+
+static int32_t ramp_i32(int32_t start_value, int32_t target_value, uint32_t elapsed_ms, uint32_t ramp_ms)
+{
+    if ((ramp_ms == 0U) || (elapsed_ms >= ramp_ms)) {
+        return target_value;
+    }
+
+    return start_value + (((target_value - start_value) * (int32_t)elapsed_ms) / (int32_t)ramp_ms);
 }
 
 static int32_t abs_i32(int32_t value)
@@ -695,14 +712,16 @@ static void run_task1_ab(void)
 
     TB6612_Brake();
     st011_pulse(TASK1_START_ALARM_MS);
-    (void)jy62_zero_to_current("task1_zero", 0);
+    delay_ms(TASK1_START_SETTLE_MS);
+    (void)jy62_zero_to_current("task1_zero", TASK1_START_SETTLE_MS);
+    delay_ms(TASK1_AFTER_ZERO_DELAY_MS);
 
     IRTracking_Init();
     straight_pid_reset(&pid);
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
 
-    TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
+    TB6612_SetDifferential(TASK1_RAMP_B_START_PWM, TASK1_RAMP_A_START_PWM);
 
     while (elapsed_ms < TASK1_MAX_RUN_MS) {
         int32_t motor_b_speed;
@@ -717,13 +736,17 @@ static void run_task1_ab(void)
         int32_t speed_correction;
         int32_t distance_error;
         int32_t distance_correction;
+        int32_t balance_correction;
         int32_t heading_error;
         int32_t heading_correction;
         int32_t correction;
+        int32_t base_b_pwm;
+        int32_t base_a_pwm;
         int32_t motor_b_pwm;
         int32_t motor_a_pwm;
         uint8_t nav_ok;
         uint8_t ir_armed;
+        uint8_t heading_priority;
 
         delay_ms(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
@@ -762,19 +785,38 @@ static void run_task1_ab(void)
         distance_error = motor_b_total - motor_a_total;
         distance_correction = clamp_i32(distance_error / TASK1_DISTANCE_CORR_DIVISOR,
             -TASK1_DISTANCE_CORR_MAX, TASK1_DISTANCE_CORR_MAX);
-        correction = clamp_i32(speed_correction + distance_correction + heading_correction,
+        balance_correction = speed_correction + distance_correction;
+        heading_priority = 0U;
+
+        if ((abs_i32(heading_error) >= TASK1_HEADING_PRIORITY_CDEG) &&
+            (abs_i32(error) <= TASK1_HEADING_PRIORITY_MAX_VERR) &&
+            (abs_i32(distance_error) <= TASK1_HEADING_PRIORITY_MAX_DERR) &&
+            (heading_correction != 0) &&
+            (((balance_correction > 0) && (heading_correction < 0)) ||
+             ((balance_correction < 0) && (heading_correction > 0)))) {
+            balance_correction = 0;
+            pid.integral = 0;
+            heading_priority = 1U;
+        }
+
+        correction = clamp_i32(balance_correction + heading_correction,
             -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
 
-        motor_b_pwm = clamp_i32(STRAIGHT_B_BASE_PWM - correction,
+        base_b_pwm = ramp_i32(TASK1_RAMP_B_START_PWM, STRAIGHT_B_BASE_PWM,
+            elapsed_ms, TASK1_START_RAMP_MS);
+        base_a_pwm = ramp_i32(TASK1_RAMP_A_START_PWM, STRAIGHT_A_BASE_PWM,
+            elapsed_ms, TASK1_START_RAMP_MS);
+
+        motor_b_pwm = clamp_i32(base_b_pwm - correction,
             STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
-        motor_a_pwm = clamp_i32(STRAIGHT_A_BASE_PWM + correction,
+        motor_a_pwm = clamp_i32(base_a_pwm + correction,
             STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
 
         TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
 
         if (report_elapsed_ms >= TASK1_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("TASK1 t=%lu dist=%ld arm=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u h_err=%ld h_corr=%ld B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
+            lc_printf("TASK1 t=%lu dist=%ld arm=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u h_err=%ld h_corr=%ld hp=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
                 elapsed_ms,
                 distance_count,
                 ir_armed,
@@ -786,6 +828,7 @@ static void run_task1_ab(void)
                 nav_ok,
                 heading_error,
                 heading_correction,
+                heading_priority,
                 motor_b_total,
                 motor_a_total,
                 distance_error,
@@ -797,7 +840,10 @@ static void run_task1_ab(void)
                 i_term,
                 d_term,
                 speed_correction,
+                balance_correction,
                 correction,
+                base_b_pwm,
+                base_a_pwm,
                 motor_b_pwm,
                 motor_a_pwm);
         }
