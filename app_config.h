@@ -5,8 +5,8 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 当前接线：左轮是 B 电机，右轮是 A 电机。 */
-#define STRAIGHT_B_BASE_PWM (515)
-#define STRAIGHT_A_BASE_PWM (555)
+#define STRAIGHT_B_BASE_PWM (510)
+#define STRAIGHT_A_BASE_PWM (560)
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (650)
 
@@ -45,8 +45,8 @@
 #define TASK1_START_SETTLE_MS   (250)
 #define TASK1_AFTER_ZERO_DELAY_MS (100)
 #define TASK1_START_RAMP_MS       (400)
-#define TASK1_RAMP_B_START_PWM    (475)
-#define TASK1_RAMP_A_START_PWM    (515)
+#define TASK1_RAMP_B_START_PWM    (500)
+#define TASK1_RAMP_A_START_PWM    (540)
 #define TASK1_REPORT_PERIOD_MS    (100)
 #define TASK1_MAX_RUN_MS          (15000)
 #define TASK1_B_LINE_ARM_COUNT    (6000)
@@ -55,12 +55,12 @@
 
 /* 任务二：A-B 直行、B-C 半弧循迹、C-D 直行、D-A 半弧循迹。 */
 #define TASK2_POINT_ALARM_MS          (120)
-#define TASK2_CD_HEADING_TARGET_CDEG  (18100)
+#define TASK2_CD_HEADING_TARGET_CDEG  (17950)
 #define TASK2_CD_HEADING_CORR_DIVISOR (12)
 #define TASK2_CD_HEADING_CORR_MAX     (70)
 #define TASK2_CD_HEADING_GYRO_DAMP_DIVISOR (1200)
-#define TASK2_ARC_BASE_PWM            (430)
-#define TASK2_ARC_MIN_BASE_PWM        (285)
+#define TASK2_ARC_BASE_PWM            (485)
+#define TASK2_ARC_MIN_BASE_PWM        (325)
 #define TASK2_ARC_MIN_PWM             (0)
 #define TASK2_ARC_MAX_PWM             (650)
 #define TASK2_ARC_ERROR_DEADBAND      (180)

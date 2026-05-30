@@ -104,7 +104,9 @@ static int32_t normalize_cdeg(int32_t angle_cdeg)
 typedef enum {
     TASK_ID_NONE = 0,
     TASK_ID_1 = 1,
-    TASK_ID_2 = 2
+    TASK_ID_2 = 2,
+    TASK_ID_5 = 5,
+    TASK_ID_STOP = 255
 } task_id_t;
 
 static task_id_t task_uart_read_command(void)
@@ -113,6 +115,11 @@ static task_id_t task_uart_read_command(void)
 
     while (DL_UART_Main_isRXFIFOEmpty(UART_0_INST) == false) {
         uint8_t ch = DL_UART_Main_receiveData(UART_0_INST);
+
+        if (ch == 0x00U) {
+            seen_zero = 0U;
+            return TASK_ID_STOP;
+        }
 
         if ((ch == '1') || (ch == 0x01U)) {
             seen_zero = 0U;
@@ -124,6 +131,11 @@ static task_id_t task_uart_read_command(void)
             return TASK_ID_2;
         }
 
+        if ((ch == '5') || (ch == 0x05U)) {
+            seen_zero = 0U;
+            return TASK_ID_5;
+        }
+
         if (seen_zero != 0U) {
             seen_zero = 0U;
             if (ch == '1') {
@@ -131,6 +143,12 @@ static task_id_t task_uart_read_command(void)
             }
             if (ch == '2') {
                 return TASK_ID_2;
+            }
+            if (ch == '5') {
+                return TASK_ID_5;
+            }
+            if (ch == '0') {
+                return TASK_ID_STOP;
             }
         }
 
@@ -140,6 +158,11 @@ static task_id_t task_uart_read_command(void)
     }
 
     return TASK_ID_NONE;
+}
+
+static uint8_t task_uart_stop_requested(void)
+{
+    return (task_uart_read_command() == TASK_ID_STOP) ? 1U : 0U;
 }
 
 static uint8_t task_button_pin_is_pressed(uint32_t pin)
@@ -227,14 +250,17 @@ static uint8_t jy62_zero_to_current(const char *mode, uint32_t elapsed_ms)
 
 static task_id_t wait_task_uart_command(void)
 {
-    uint32_t elapsed_ms = 0;
-    uint32_t jy62_elapsed_ms = 0;
     task_id_t task_id;
 
     while (1) {
         task_id = task_uart_read_command();
         if (task_id != TASK_ID_NONE) {
-            lc_printf("TASK UART command accepted: id=%u\r\n", task_id);
+            if (task_id == TASK_ID_STOP) {
+                TB6612_Brake();
+                lc_printf("TASK UART command accepted: id=0 stop\r\n");
+            } else {
+                lc_printf("TASK UART command accepted: id=%u\r\n", task_id);
+            }
             return task_id;
         }
 
@@ -253,13 +279,6 @@ static task_id_t wait_task_uart_command(void)
 
         TB6612_Brake();
         delay_ms_with_st011(TASK_BUTTON_IDLE_MS);
-        elapsed_ms += TASK_BUTTON_IDLE_MS;
-        jy62_elapsed_ms += TASK_BUTTON_IDLE_MS;
-
-        if (jy62_elapsed_ms >= JY62_IDLE_REPORT_PERIOD_MS) {
-            jy62_elapsed_ms = 0;
-            jy62_print_navigation_line("idle", elapsed_ms);
-        }
     }
 }
 
@@ -341,6 +360,11 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         elapsed_ms += CONTROL_PERIOD_MS;
         report_elapsed_ms += CONTROL_PERIOD_MS;
         jy62_report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
 
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
@@ -486,7 +510,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
     stop_nav_ok = JY62_PeekNavigation(&nav);
     lc_printf("%s stop: reason=%s t=%lu dist=%ld arm=%d force=%d raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u rel_cdeg=%ld B_total=%ld A_total=%ld\r\n",
         tag,
-        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : "timeout"),
+        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "uart_stop" : "timeout")),
         elapsed_ms,
         (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
         TASK1_B_LINE_ARM_COUNT,
@@ -587,6 +611,11 @@ static uint8_t run_arc_line_follow_segment(const char *tag,
         delay_ms_with_st011(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
         report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 5U;
+            break;
+        }
 
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
@@ -757,7 +786,7 @@ static uint8_t run_arc_line_follow_segment(const char *tag,
     lc_printf("%s stop: reason_id=%u reason=%s t=%lu dist=%ld yaw_rel=%ld yaw_abs=%ld yaw_err=%ld nav=%u ir=%u raw=0x%02X mask=0x%02X cnt=%u\r\n",
         tag,
         stop_reason,
-        (stop_reason == 1U) ? "yaw" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? ((align_required != 0U) ? "line_end_aligned" : "line_end") : ((stop_reason == 4U) ? "align_timeout" : "timeout"))),
+        (stop_reason == 1U) ? "yaw" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? ((align_required != 0U) ? "line_end_aligned" : "line_end") : ((stop_reason == 4U) ? "align_timeout" : ((stop_reason == 5U) ? "uart_stop" : "timeout")))),
         elapsed_ms,
         (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
         (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
@@ -848,10 +877,15 @@ static void run_task_dispatcher(void)
 
     st011_set_active(0U);
     TB6612_Brake();
-    lc_printf("TASK ready: UART0 01 or PB00=task1, UART0 02 or PB21=task2\r\n");
+    lc_printf("TASK ready: UART0 01 or PB00=task1, UART0 02 or PB21=task2, UART0 05=PWM test, UART0 00=stop\r\n");
 
     while (1) {
         task_id = wait_task_uart_command();
+
+        if (task_id == TASK_ID_STOP) {
+            TB6612_Brake();
+            continue;
+        }
 
         if ((task_id == TASK_ID_1) || (task_id == TASK_ID_2)) {
             TB6612_Brake();
@@ -862,6 +896,9 @@ static void run_task_dispatcher(void)
             run_task1_ab();
         } else if (task_id == TASK_ID_2) {
             run_task2_abcd();
+        } else if (task_id == TASK_ID_5) {
+            TB6612_Brake();
+            run_motor_pid_stream();
         } else {
             TB6612_Brake();
             st011_pulse(TASK1_START_ALARM_MS);

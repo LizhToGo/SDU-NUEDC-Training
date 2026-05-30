@@ -10,6 +10,27 @@
 #include "bsp_ir_tracking.h"
 #include "bsp_tb6612.h"
 
+static inline uint8_t debug_uart_stop_requested(void)
+{
+    static uint8_t seen_zero = 0U;
+
+    while (DL_UART_Main_isRXFIFOEmpty(UART_0_INST) == false) {
+        uint8_t ch = DL_UART_Main_receiveData(UART_0_INST);
+
+        if (ch == 0x00U) {
+            seen_zero = 0U;
+            return 1U;
+        }
+        if ((seen_zero != 0U) && (ch == '0')) {
+            seen_zero = 0U;
+            return 1U;
+        }
+        seen_zero = (ch == '0') ? 1U : 0U;
+    }
+
+    return 0U;
+}
+
 /* 主电机闭环调试。该函数会一直运行，并按设定周期打印 PID 数据。 */
 static inline void run_motor_pid_stream(void)
 {
@@ -43,6 +64,12 @@ static inline void run_motor_pid_stream(void)
         delay_ms(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
         report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (debug_uart_stop_requested() != 0U) {
+            TB6612_Brake();
+            lc_printf("PID motor stream stop: UART0 00\r\n");
+            return;
+        }
 
         /* 用 20 ms 时间窗口内的编码器增量作为简化速度估计。 */
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
