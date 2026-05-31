@@ -10,6 +10,8 @@ typedef struct {
     int32_t kp;
     int32_t ki;
     int32_t kd;
+    int32_t i_limit;
+    int32_t corr_max;
     int32_t integral;
     int32_t last_error;
 } straight_pid_t;
@@ -55,8 +57,19 @@ static inline void straight_pid_reset(straight_pid_t *pid)
     pid->kp = STRAIGHT_PID_KP;
     pid->ki = STRAIGHT_PID_KI;
     pid->kd = STRAIGHT_PID_KD;
+    pid->i_limit = STRAIGHT_I_LIMIT;
+    pid->corr_max = STRAIGHT_CORR_MAX;
     pid->integral = 0;
     pid->last_error = 0;
+}
+
+static inline void straight_pid_set_limits(straight_pid_t *pid,
+    int32_t i_limit,
+    int32_t corr_max)
+{
+    pid->i_limit = (i_limit > 0) ? i_limit : STRAIGHT_I_LIMIT;
+    pid->corr_max = (corr_max > 0) ? corr_max : STRAIGHT_CORR_MAX;
+    pid->integral = clamp_i32(pid->integral, -pid->i_limit, pid->i_limit);
 }
 
 static inline void heading_filter_reset(heading_filter_t *filter)
@@ -122,18 +135,20 @@ static inline int32_t heading_filter_update(heading_filter_t *filter,
 }
 
 /*
- * PID 目标：让 B 电机速度等于 A 电机速度。
- * correction 为正表示 B 轮更快，因此会降低 B 轮 PWM、提高 A 轮 PWM。
+ * PID 目标：让 B_spd - A_spd 接近 target_speed_diff。
+ * correction 为正表示 B 轮相对目标偏快，因此会降低 B 轮 PWM、提高 A 轮 PWM。
  */
 static inline int32_t straight_pid_update(straight_pid_t *pid,
     int32_t motor_b_speed,
     int32_t motor_a_speed,
+    int32_t target_speed_diff,
     int32_t *error_out,
     int32_t *p_out,
     int32_t *i_out,
     int32_t *d_out)
 {
-    int32_t error = motor_b_speed - motor_a_speed;
+    int32_t speed_diff = motor_b_speed - motor_a_speed;
+    int32_t error = speed_diff - target_speed_diff;
     int32_t derivative = error - pid->last_error;
     int32_t p_term;
     int32_t i_term;
@@ -141,11 +156,11 @@ static inline int32_t straight_pid_update(straight_pid_t *pid,
     int32_t output;
 
     /*
-     * err = B_spd - A_spd：
-     * err > 0 表示左轮 B 比右轮 A 快，需要降低 B、提高 A；
-     * err < 0 表示右轮 A 比左轮 B 快，需要提高 B、降低 A。
+     * err = (B_spd - A_spd) - target：
+     * err > 0 表示左轮 B 相对目标偏快，需要降低 B、提高 A；
+     * err < 0 表示右轮 A 相对目标偏快，需要提高 B、降低 A。
      */
-    pid->integral = clamp_i32(pid->integral + error, -STRAIGHT_I_LIMIT, STRAIGHT_I_LIMIT);
+    pid->integral = clamp_i32(pid->integral + error, -pid->i_limit, pid->i_limit);
     pid->last_error = error;
 
     p_term = pid->kp * error;
@@ -159,7 +174,7 @@ static inline int32_t straight_pid_update(straight_pid_t *pid,
     *i_out = i_term;
     *d_out = d_term;
 
-    return clamp_i32(output, -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
+    return clamp_i32(output, -pid->corr_max, pid->corr_max);
 }
 
 #endif

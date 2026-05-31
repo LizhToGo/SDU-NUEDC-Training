@@ -417,6 +417,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
 
         speed_correction = straight_pid_update(&pid,
             motor_b_speed, motor_a_speed,
+            STRAIGHT_TARGET_SPEED_DIFF,
             &error, &p_term, &i_term, &d_term);
         distance_error = motor_b_total - motor_a_total;
         distance_correction = clamp_i32(distance_error / TASK1_DISTANCE_CORR_DIVISOR,
@@ -457,7 +458,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
 
         if (report_elapsed_ms >= TASK1_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu dist=%ld arm=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u h_raw=%ld h_tgt=%ld h_flt=%ld h_use=%ld h_gain=%ld h_wob=%u gzlp=%ld h_corr=%ld hp=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
+            lc_printf("%s t=%lu dist=%ld arm=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u h_raw=%ld h_tgt=%ld h_flt=%ld h_use=%ld h_gain=%ld h_wob=%u gzlp=%ld h_corr=%ld hp=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_tgt=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
                 tag,
                 elapsed_ms,
                 distance_count,
@@ -483,6 +484,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
                 distance_correction,
                 motor_b_speed,
                 motor_a_speed,
+                (int32_t)STRAIGHT_TARGET_SPEED_DIFF,
                 error,
                 p_term,
                 i_term,

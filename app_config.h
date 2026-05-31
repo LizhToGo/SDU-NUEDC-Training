@@ -5,8 +5,8 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 当前接线：左轮是 B 电机，右轮是 A 电机。 */
-#define STRAIGHT_B_BASE_PWM (510)
-#define STRAIGHT_A_BASE_PWM (560)
+#define STRAIGHT_B_BASE_PWM (501)
+#define STRAIGHT_A_BASE_PWM (569)
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (650)
 
@@ -99,6 +99,15 @@
 #define STRAIGHT_PID_KD    (6)
 #define STRAIGHT_I_LIMIT   (180)
 #define STRAIGHT_CORR_MAX  (80)
+
+/* 速度差目标：target = B_spd - A_spd。直线段保持 0，弧线段后续可传入非零目标。 */
+#define STRAIGHT_TARGET_SPEED_DIFF (0)
+
+/* 05 轮速标定模式使用更大的限幅，用于验证弧线会用到的非零差速闭环。 */
+#define PID_TEST_TARGET_SPEED_DIFF (0)
+#define PID_TEST_I_LIMIT           (600)
+#define PID_TEST_CORR_MAX          (180)
+#define PID_TEST_DIFF_FF_GAIN      (3)
 
 /* 任务一的编码器距离修正和 JY62 航向修正参数。 */
 #define TASK1_DISTANCE_CORR_DIVISOR (28)

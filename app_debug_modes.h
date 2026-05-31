@@ -37,26 +37,44 @@ static inline void run_motor_pid_stream(void)
     straight_pid_t pid;
     uint32_t elapsed_ms = 0;
     uint32_t report_elapsed_ms = 0;
+    int32_t report_b_speed_sum = 0;
+    int32_t report_a_speed_sum = 0;
+    uint32_t report_sample_count = 0;
     int32_t motor_b_delta;
     int32_t motor_a_delta;
+    int32_t feedforward_correction =
+        -((int32_t)PID_TEST_TARGET_SPEED_DIFF * (int32_t)PID_TEST_DIFF_FF_GAIN);
 
     straight_pid_reset(&pid);
+    straight_pid_set_limits(&pid, PID_TEST_I_LIMIT, PID_TEST_CORR_MAX);
+    feedforward_correction = clamp_i32(feedforward_correction,
+        -PID_TEST_CORR_MAX, PID_TEST_CORR_MAX);
 
     /* 先清掉第一次读取的历史增量，避免启动瞬间把旧计数当作速度。 */
     encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
     TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
-    lc_printf("PID motor stream start: B_base=%d A_base=%d period=%dms report=%dms\r\n",
-        STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM, CONTROL_PERIOD_MS, PID_REPORT_PERIOD_MS);
+    lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld i_limit=%d corr_max=%d period=%dms report=%dms\r\n",
+        STRAIGHT_B_BASE_PWM,
+        STRAIGHT_A_BASE_PWM,
+        PID_TEST_TARGET_SPEED_DIFF,
+        PID_TEST_DIFF_FF_GAIN,
+        feedforward_correction,
+        PID_TEST_I_LIMIT,
+        PID_TEST_CORR_MAX,
+        CONTROL_PERIOD_MS,
+        PID_REPORT_PERIOD_MS);
     encoder_enable_interrupts();
     lc_printf("PID encoder IRQ enabled, B=PA14/PA15 A=PA16/PA17\r\n");
 
     while (1) {
         int32_t motor_b_speed;
         int32_t motor_a_speed;
+        int32_t speed_diff;
         int32_t error;
         int32_t p_term;
         int32_t i_term;
         int32_t d_term;
+        int32_t feedback_correction;
         int32_t correction;
         int32_t motor_b_pwm;
         int32_t motor_a_pwm;
@@ -75,10 +93,17 @@ static inline void run_motor_pid_stream(void)
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         motor_b_speed = abs_i32(motor_b_delta);
         motor_a_speed = abs_i32(motor_a_delta);
+        speed_diff = motor_b_speed - motor_a_speed;
+        report_b_speed_sum += motor_b_speed;
+        report_a_speed_sum += motor_a_speed;
+        report_sample_count++;
 
-        correction = straight_pid_update(&pid,
+        feedback_correction = straight_pid_update(&pid,
             motor_b_speed, motor_a_speed,
+            PID_TEST_TARGET_SPEED_DIFF,
             &error, &p_term, &i_term, &d_term);
+        correction = clamp_i32(feedforward_correction + feedback_correction,
+            -PID_TEST_CORR_MAX, PID_TEST_CORR_MAX);
 
         /*
          * correction 为正时，说明 B 轮偏快，所以 B_pwm 减小、A_pwm 增大；
@@ -93,13 +118,30 @@ static inline void run_motor_pid_stream(void)
         TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
 
         if (report_elapsed_ms >= PID_REPORT_PERIOD_MS) {
+            int32_t b_speed_avg = (report_sample_count != 0U) ?
+                (report_b_speed_sum / (int32_t)report_sample_count) : motor_b_speed;
+            int32_t a_speed_avg = (report_sample_count != 0U) ?
+                (report_a_speed_sum / (int32_t)report_sample_count) : motor_a_speed;
+            int32_t diff_avg = b_speed_avg - a_speed_avg;
+
             report_elapsed_ms = 0;
-            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_spd=%ld A_spd=%ld err=%ld P=%ld I=%ld D=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
+            report_b_speed_sum = 0;
+            report_a_speed_sum = 0;
+            report_sample_count = 0;
+            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
                 elapsed_ms,
                 motor_b_delta, motor_a_delta,
                 motor_b_speed, motor_a_speed,
+                speed_diff,
+                b_speed_avg,
+                a_speed_avg,
+                diff_avg,
+                PID_TEST_TARGET_SPEED_DIFF,
                 error, p_term, i_term, d_term,
-                correction, motor_b_pwm, motor_a_pwm);
+                feedforward_correction,
+                feedback_correction,
+                correction,
+                motor_b_pwm, motor_a_pwm);
         }
     }
 }
