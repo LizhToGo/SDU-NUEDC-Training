@@ -282,6 +282,20 @@ static task_id_t wait_task_uart_command(void)
     }
 }
 
+static int32_t task2_straight_search_direction(uint8_t fast_correction,
+    int32_t heading_target_cdeg)
+{
+    if (fast_correction != 0U) {
+        return -1;
+    }
+
+    if (heading_target_cdeg != 0) {
+        return 1;
+    }
+
+    return 1;
+}
+
 static uint8_t run_straight_to_line_segment(const char *tag,
     uint8_t zero_heading,
     int32_t heading_target_cdeg,
@@ -352,6 +366,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         int32_t distance_corr_max;
         int32_t stop_error_max;
         int32_t search_correction;
+        int32_t search_direction;
         int32_t correction;
         int32_t base_b_pwm;
         int32_t base_a_pwm;
@@ -491,14 +506,19 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         if (search_mode != 0U) {
             base_b_pwm -= TASK2_STRAIGHT_SEARCH_BASE_DROP;
             base_a_pwm -= TASK2_STRAIGHT_SEARCH_BASE_DROP;
+            search_direction = task2_straight_search_direction(fast_correction,
+                heading_target_cdeg);
             if ((ir_ok != 0U) && (sample.line_lost == 0U)) {
                 search_correction = clamp_i32(-(sample.error / TASK2_STRAIGHT_SEARCH_CORR_DIVISOR),
                     -TASK2_STRAIGHT_SEARCH_CORR_MAX,
                     TASK2_STRAIGHT_SEARCH_CORR_MAX);
+                if (search_correction == 0) {
+                    search_correction = search_direction * TASK2_STRAIGHT_SEARCH_SOFT_CORR;
+                }
             } else if (distance_count >= TASK2_STRAIGHT_SEARCH_SWEEP_START_COUNT) {
-                search_correction =
-                    (((elapsed_ms / TASK2_STRAIGHT_SEARCH_SWEEP_MS) & 1U) == 0U) ?
-                    TASK2_STRAIGHT_SEARCH_SWEEP_CORR : -TASK2_STRAIGHT_SEARCH_SWEEP_CORR;
+                search_correction = search_direction * TASK2_STRAIGHT_SEARCH_SWEEP_CORR;
+            } else {
+                search_correction = search_direction * TASK2_STRAIGHT_SEARCH_SOFT_CORR;
             }
             correction = clamp_i32(correction + search_correction,
                 -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
@@ -949,7 +969,7 @@ static void run_task2_abcd(void)
         TASK2_CD_HEADING_TARGET_CDEG,
         1U,
         0U,
-        1U,
+        0U,
         0U,
         0U);
     if (reason != 1U) {
