@@ -42,6 +42,9 @@ static inline void run_motor_pid_stream(void)
     uint32_t report_sample_count = 0;
     int32_t motor_b_delta;
     int32_t motor_a_delta;
+    int32_t motor_b_total;
+    int32_t motor_a_total;
+    int32_t distance_count;
     int32_t feedforward_correction =
         -((int32_t)PID_TEST_TARGET_SPEED_DIFF * (int32_t)PID_TEST_DIFF_FF_GAIN);
 
@@ -50,9 +53,8 @@ static inline void run_motor_pid_stream(void)
     feedforward_correction = clamp_i32(feedforward_correction,
         -PID_TEST_CORR_MAX, PID_TEST_CORR_MAX);
 
-    /* 先清掉第一次读取的历史增量，避免启动瞬间把旧计数当作速度。 */
-    encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
-    TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
+    /* 每次进入 05 模式都从 0 开始累计，方便标定 COUNTS_PER_CM。 */
+    encoder_reset_distance_counts();
     lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld i_limit=%d corr_max=%d period=%dms report=%dms\r\n",
         STRAIGHT_B_BASE_PWM,
         STRAIGHT_A_BASE_PWM,
@@ -65,6 +67,7 @@ static inline void run_motor_pid_stream(void)
         PID_REPORT_PERIOD_MS);
     encoder_enable_interrupts();
     lc_printf("PID encoder IRQ enabled, B=PA14/PA15 A=PA16/PA17\r\n");
+    TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
 
     while (1) {
         int32_t motor_b_speed;
@@ -85,14 +88,21 @@ static inline void run_motor_pid_stream(void)
 
         if (debug_uart_stop_requested() != 0U) {
             TB6612_Brake();
-            lc_printf("PID motor stream stop: UART0 00\r\n");
+            encoder_get_total_counts(&motor_b_total, &motor_a_total);
+            distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+            lc_printf("PID motor stream stop: UART0 00 B_total=%ld A_total=%ld dist_count=%ld\r\n",
+                motor_b_total,
+                motor_a_total,
+                distance_count);
             return;
         }
 
         /* 用 20 ms 时间窗口内的编码器增量作为简化速度估计。 */
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
         motor_b_speed = abs_i32(motor_b_delta);
         motor_a_speed = abs_i32(motor_a_delta);
+        distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
         speed_diff = motor_b_speed - motor_a_speed;
         report_b_speed_sum += motor_b_speed;
         report_a_speed_sum += motor_a_speed;
@@ -128,9 +138,12 @@ static inline void run_motor_pid_stream(void)
             report_b_speed_sum = 0;
             report_a_speed_sum = 0;
             report_sample_count = 0;
-            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
+            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_total=%ld A_total=%ld dist_count=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
                 elapsed_ms,
                 motor_b_delta, motor_a_delta,
+                motor_b_total,
+                motor_a_total,
+                distance_count,
                 motor_b_speed, motor_a_speed,
                 speed_diff,
                 b_speed_avg,

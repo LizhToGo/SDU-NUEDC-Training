@@ -560,10 +560,25 @@ static int32_t task2_arc_align_delta_cdeg(int32_t yaw_cdeg, int32_t last_turn)
     return target_cdeg - yaw_cdeg;
 }
 
+typedef enum {
+    ARC_TURN_LEFT = -1,
+    ARC_TURN_RIGHT = 1
+} arc_turn_dir_t;
+
+static int32_t task2_arc_model_target_diff(arc_turn_dir_t turn_dir)
+{
+    int32_t target_diff = ((int32_t)TASK2_ARC_CENTER_SPEED_COUNT *
+        (int32_t)TASK2_ARC_WHEEL_BASE_MM) / (int32_t)TASK2_ARC_RADIUS_MM;
+
+    target_diff = clamp_i32(target_diff, 0, TASK2_ARC_TARGET_DIFF_MAX);
+    return ((int32_t)turn_dir > 0) ? target_diff : -target_diff;
+}
+
 static uint8_t run_arc_line_follow_segment(const char *tag,
     uint32_t stop_alarm_ms,
-    uint8_t align_required)
+    arc_turn_dir_t turn_dir)
 {
+    straight_pid_t diff_pid;
     ir_tracking_sample_t sample = {0};
     jy62_navigation_t nav = {0};
     uint32_t elapsed_ms = 0;
@@ -572,43 +587,62 @@ static uint8_t run_arc_line_follow_segment(const char *tag,
     int32_t motor_a_delta;
     int32_t filtered_error = 0;
     int32_t last_filtered_error = 0;
-    int32_t turn_command = 0;
+    int32_t arc_start_yaw = 0;
+    int32_t model_target_diff = task2_arc_model_target_diff(turn_dir);
     uint8_t stop_reason = 0U;
     uint8_t ir_ok = 0U;
     uint8_t nav_ok = 0U;
-    uint8_t lost_count = 0U;
-    uint8_t align_stable_count = 0U;
-    uint32_t align_elapsed_ms = 0;
-    int32_t last_turn = 0;
+    uint8_t head_exit_seen = 0U;
 
     IRTracking_Init();
+    straight_pid_reset(&diff_pid);
+    straight_pid_set_limits(&diff_pid, TASK2_ARC_PID_I_LIMIT, TASK2_ARC_PID_CORR_MAX);
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
+    nav_ok = JY62_PeekNavigation(&nav);
+    arc_start_yaw = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
 
-    lc_printf("%s start: arc line follow base=%d min_base=%d yaw_target=%d tol=%d min_dist=%d align=%u\r\n",
+    lc_printf("%s start: arc model follow dir=%d R=%dcm W=%dmm sensor_axis=%dmm cpcm=%d arc_len=%ld exit_arm=%ld finish=%ld model_diff=%ld base=%d/%d\r\n",
         tag,
-        TASK2_ARC_BASE_PWM,
-        TASK2_ARC_MIN_BASE_PWM,
-        TASK2_ARC_ALIGN_TARGET_CDEG,
-        TASK2_ARC_ALIGN_TOL_CDEG,
-        TASK2_ARC_MIN_DISTANCE_COUNT,
-        align_required);
+        (int32_t)turn_dir,
+        TASK2_ARC_RADIUS_CM,
+        TASK2_ARC_WHEEL_BASE_MM,
+        TASK2_ARC_SENSOR_TO_AXIS_MM,
+        COUNTS_PER_CM,
+        (int32_t)TASK2_ARC_LENGTH_COUNT,
+        (int32_t)TASK2_ARC_EXIT_ARM_COUNT,
+        (int32_t)TASK2_ARC_FINISH_COUNT,
+        model_target_diff,
+        TASK2_ARC_B_BASE_PWM,
+        TASK2_ARC_A_BASE_PWM);
 
     while (elapsed_ms < TASK2_ARC_MAX_RUN_MS) {
         int32_t motor_b_total;
         int32_t motor_a_total;
+        int32_t motor_b_speed;
+        int32_t motor_a_speed;
         int32_t distance_count;
         int32_t raw_error;
         int32_t error;
         int32_t derivative;
-        int32_t turn;
-        int32_t turn_raw;
-        int32_t base_pwm;
+        int32_t ir_correction = 0;
+        int32_t yaw_correction = 0;
+        int32_t target_diff;
+        int32_t pid_error;
+        int32_t p_term;
+        int32_t i_term;
+        int32_t d_term;
+        int32_t feedback_correction;
+        int32_t feedforward_correction;
+        int32_t pwm_correction;
         int32_t left_pwm;
         int32_t right_pwm;
-        int32_t yaw_abs;
         int32_t yaw_rel;
-        int32_t yaw_align_error;
+        int32_t yaw_delta;
+        int32_t yaw_progress;
+        int32_t theta_ref;
+        int32_t yaw_lag;
+        uint8_t line_lost;
 
         delay_ms_with_st011(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
@@ -621,135 +655,81 @@ static uint8_t run_arc_line_follow_segment(const char *tag,
 
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        motor_b_speed = abs_i32(motor_b_delta);
+        motor_a_speed = abs_i32(motor_a_delta);
         distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
 
         nav_ok = JY62_PeekNavigation(&nav);
         yaw_rel = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
-        yaw_abs = abs_i32(yaw_rel);
-        yaw_align_error = (nav_ok != 0U) ?
-            task2_arc_yaw_align_error(yaw_rel) : TASK2_ARC_ALIGN_TARGET_CDEG;
+        yaw_delta = (nav_ok != 0U) ? normalize_cdeg(yaw_rel - arc_start_yaw) : 0;
+        yaw_progress = abs_i32(yaw_delta);
+        theta_ref = (int32_t)(((int64_t)distance_count * 18000LL) /
+            (int64_t)TASK2_ARC_LENGTH_COUNT);
+        theta_ref = clamp_i32(theta_ref, 0, 18000);
+        yaw_lag = theta_ref - yaw_progress;
+        yaw_correction = clamp_i32(yaw_lag / TASK2_ARC_YAW_CORR_DIVISOR,
+            -TASK2_ARC_YAW_CORR_MAX, TASK2_ARC_YAW_CORR_MAX);
+        yaw_correction *= (int32_t)turn_dir;
 
         ir_ok = IRTracking_ReadSample(&sample);
-        if ((ir_ok == 0U) || (sample.line_lost != 0U)) {
-            uint8_t yaw_in_exit_window =
-                ((nav_ok != 0U) && (task2_arc_yaw_in_exit_window(nav.yaw_relative_cdeg) != 0U)) ? 1U : 0U;
-            int32_t align_dir = 0;
+        line_lost = ((ir_ok == 0U) || (sample.line_lost != 0U)) ? 1U : 0U;
 
-            if ((ir_ok != 0U) &&
-                (sample.line_lost != 0U) &&
-                (distance_count >= TASK2_ARC_MIN_DISTANCE_COUNT)) {
-                align_elapsed_ms += CONTROL_PERIOD_MS;
-
-                if (align_required == 0U) {
-                    lost_count++;
-                    if (lost_count >= TASK2_ARC_LOST_STOP_COUNT) {
-                        stop_reason = 3U;
-                        break;
-                    }
-                } else {
-                    if (yaw_in_exit_window != 0U) {
-                        align_stable_count++;
-                    } else {
-                        align_stable_count = 0U;
-                    }
-
-                    if (align_stable_count >= TASK2_ARC_ALIGN_STABLE_COUNT) {
-                        stop_reason = 3U;
-                        break;
-                    } else {
-                        lost_count = 0U;
-                    }
-
-                    if (align_elapsed_ms >= TASK2_ARC_ALIGN_TIMEOUT_MS) {
-                        stop_reason = 4U;
-                        break;
-                    }
-                }
-            } else {
-                lost_count = 0U;
-                align_stable_count = 0U;
-                align_elapsed_ms = 0;
-            }
-
-            if ((ir_ok != 0U) &&
-                (sample.line_lost != 0U) &&
-                (distance_count >= TASK2_ARC_MIN_DISTANCE_COUNT) &&
-                (align_required != 0U) &&
-                (align_stable_count < TASK2_ARC_ALIGN_STABLE_COUNT)) {
-                int32_t align_delta = (nav_ok != 0U) ?
-                    task2_arc_align_delta_cdeg(yaw_rel, last_turn) :
-                    ((last_turn >= 0) ? -1 : 1);
-
-                if (align_delta < 0) {
-                    align_dir = 1;
-                    TB6612_SetDifferential(TASK2_ARC_ALIGN_OUTER_PWM, TASK2_ARC_ALIGN_INNER_PWM);
-                } else {
-                    align_dir = -1;
-                    TB6612_SetDifferential(TASK2_ARC_ALIGN_INNER_PWM, TASK2_ARC_ALIGN_OUTER_PWM);
-                }
-            } else if (!((ir_ok != 0U) &&
-                (sample.line_lost != 0U) &&
-                (distance_count >= TASK2_ARC_MIN_DISTANCE_COUNT) &&
-                (align_required == 0U))) {
-                TB6612_Brake();
-            }
-
-            if (report_elapsed_ms >= TASK2_ARC_REPORT_PERIOD_MS) {
-                report_elapsed_ms = 0;
-                lc_printf("%s t=%lu dist=%ld yaw_rel=%ld yaw_abs=%ld yaw_err=%ld nav=%u ir=%u lost=%u yaw_ok=%u stable=%u lost_cnt=%u raw=0x%02X mask=0x%02X exit_align=%u align_dir=%ld align_pwm=%d/%d\r\n",
-                    tag,
-                    elapsed_ms,
-                    distance_count,
-                    yaw_rel,
-                    yaw_abs,
-                    yaw_align_error,
-                    nav_ok,
-                    ir_ok,
-                    (ir_ok != 0U) ? sample.line_lost : 1U,
-                    yaw_in_exit_window,
-                    align_stable_count,
-                    lost_count,
-                    (ir_ok != 0U) ? sample.raw : 0xFFU,
-                    (ir_ok != 0U) ? sample.line_mask : 0U,
-                    ((ir_ok != 0U) &&
-                    (sample.line_lost != 0U) &&
-                    (distance_count >= TASK2_ARC_MIN_DISTANCE_COUNT) &&
-                    (align_required != 0U) &&
-                    (align_stable_count < TASK2_ARC_ALIGN_STABLE_COUNT)) ? 1U : 0U,
-                    align_dir,
-                    TASK2_ARC_ALIGN_OUTER_PWM,
-                    TASK2_ARC_ALIGN_INNER_PWM);
-            }
-
-            continue;
+        if ((line_lost != 0U) && (distance_count >= TASK2_ARC_EXIT_ARM_COUNT)) {
+            head_exit_seen = 1U;
         }
-        lost_count = 0U;
 
-        raw_error = sample.error;
-        error = (abs_i32(raw_error) < TASK2_ARC_ERROR_DEADBAND) ? 0 : raw_error;
-        filtered_error += (error - filtered_error) / TASK2_ARC_ERROR_FILTER_DIVISOR;
-        derivative = clamp_i32(filtered_error - last_filtered_error,
-            -TASK2_ARC_DERIVATIVE_LIMIT, TASK2_ARC_DERIVATIVE_LIMIT);
-        last_filtered_error = filtered_error;
+        if (line_lost == 0U) {
+            raw_error = sample.error;
+            error = (abs_i32(raw_error) < TASK2_ARC_ERROR_DEADBAND) ? 0 : raw_error;
+            filtered_error += (error - filtered_error) / TASK2_ARC_ERROR_FILTER_DIVISOR;
+            derivative = clamp_i32(filtered_error - last_filtered_error,
+                -TASK2_ARC_DERIVATIVE_LIMIT, TASK2_ARC_DERIVATIVE_LIMIT);
+            last_filtered_error = filtered_error;
 
-        base_pwm = TASK2_ARC_BASE_PWM -
-            (abs_i32(filtered_error) / TASK2_ARC_SLOW_ERROR_DIVISOR) -
-            (abs_i32(derivative) / TASK2_ARC_SLOW_DERIV_DIVISOR);
-        base_pwm = clamp_i32(base_pwm, TASK2_ARC_MIN_BASE_PWM, TASK2_ARC_BASE_PWM);
+            ir_correction = (filtered_error / TASK2_ARC_IR_KP_DIVISOR) +
+                (derivative / TASK2_ARC_IR_KD_DIVISOR);
+            ir_correction = clamp_i32(ir_correction,
+                -TASK2_ARC_IR_CORR_MAX, TASK2_ARC_IR_CORR_MAX);
+        } else {
+            raw_error = 0;
+            error = 0;
+            derivative = 0;
+        }
 
-        turn_raw = (filtered_error / TASK2_ARC_KP_DIVISOR) +
-            (derivative / TASK2_ARC_KD_DIVISOR);
-        turn_raw = clamp_i32(turn_raw, -TASK2_ARC_TURN_LIMIT, TASK2_ARC_TURN_LIMIT);
-        turn = clamp_i32(turn_raw,
-            turn_command - TASK2_ARC_TURN_SLEW_STEP,
-            turn_command + TASK2_ARC_TURN_SLEW_STEP);
-        turn_command = turn;
-        last_turn = turn;
+        target_diff = model_target_diff + ir_correction + yaw_correction;
+        target_diff = clamp_i32(target_diff,
+            -TASK2_ARC_TARGET_DIFF_MAX, TASK2_ARC_TARGET_DIFF_MAX);
+        feedback_correction = straight_pid_update(&diff_pid,
+            motor_b_speed,
+            motor_a_speed,
+            target_diff,
+            &pid_error,
+            &p_term,
+            &i_term,
+            &d_term);
+        feedforward_correction = clamp_i32(-(target_diff * TASK2_ARC_DIFF_FF_GAIN),
+            -TASK2_ARC_PID_CORR_MAX, TASK2_ARC_PID_CORR_MAX);
+        pwm_correction = clamp_i32(feedforward_correction + feedback_correction,
+            -TASK2_ARC_PID_CORR_MAX, TASK2_ARC_PID_CORR_MAX);
 
-        left_pwm = clamp_i32(base_pwm + turn, TASK2_ARC_MIN_PWM, TASK2_ARC_MAX_PWM);
-        right_pwm = clamp_i32(base_pwm - turn, TASK2_ARC_MIN_PWM, TASK2_ARC_MAX_PWM);
+        left_pwm = clamp_i32(TASK2_ARC_B_BASE_PWM - pwm_correction,
+            TASK2_ARC_MIN_PWM, TASK2_ARC_MAX_PWM);
+        right_pwm = clamp_i32(TASK2_ARC_A_BASE_PWM + pwm_correction,
+            TASK2_ARC_MIN_PWM, TASK2_ARC_MAX_PWM);
 
         TB6612_SetDifferential((int16_t)left_pwm, (int16_t)right_pwm);
+
+        if ((distance_count >= TASK2_ARC_FINISH_COUNT) &&
+            ((nav_ok == 0U) || (yaw_progress >= TASK2_ARC_YAW_DONE_CDEG))) {
+            stop_reason = 3U;
+            break;
+        }
+
+        if ((head_exit_seen != 0U) &&
+            (yaw_progress >= TASK2_ARC_ALIGN_TARGET_CDEG)) {
+            stop_reason = 3U;
+            break;
+        }
 
         if (distance_count >= TASK2_ARC_FORCE_STOP_COUNT) {
             stop_reason = 2U;
@@ -758,23 +738,36 @@ static uint8_t run_arc_line_follow_segment(const char *tag,
 
         if (report_elapsed_ms >= TASK2_ARC_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu dist=%ld yaw_rel=%ld yaw_abs=%ld yaw_err=%ld nav=%u raw=0x%02X mask=0x%02X cnt=%u raw_err=%ld err=%ld der=%ld base=%ld turn=%ld turn_raw=%ld L=%ld R=%ld align_dir=0\r\n",
+            lc_printf("%s t=%lu dist=%ld arc_len=%ld exit=%u yaw_rel=%ld yaw_prog=%ld theta=%ld yaw_lag=%ld nav=%u ir=%u lost=%u raw=0x%02X mask=0x%02X cnt=%u ir_err=%ld ir_corr=%ld yaw_corr=%ld model=%ld tgt=%ld B_spd=%ld A_spd=%ld pid_err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld pwm_corr=%ld L=%ld R=%ld\r\n",
                 tag,
                 elapsed_ms,
                 distance_count,
+                (int32_t)TASK2_ARC_LENGTH_COUNT,
+                head_exit_seen,
                 yaw_rel,
-                yaw_abs,
-                yaw_align_error,
+                yaw_progress,
+                theta_ref,
+                yaw_lag,
                 nav_ok,
-                sample.raw,
-                sample.line_mask,
-                sample.active_count,
+                ir_ok,
+                line_lost,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
                 error,
-                filtered_error,
-                derivative,
-                base_pwm,
-                turn,
-                turn_raw,
+                ir_correction,
+                yaw_correction,
+                model_target_diff,
+                target_diff,
+                motor_b_speed,
+                motor_a_speed,
+                pid_error,
+                p_term,
+                i_term,
+                d_term,
+                feedforward_correction,
+                feedback_correction,
+                pwm_correction,
                 left_pwm,
                 right_pwm);
         }
@@ -785,15 +778,15 @@ static uint8_t run_arc_line_follow_segment(const char *tag,
     }
     encoder_get_total_counts(&motor_b_delta, &motor_a_delta);
     nav_ok = JY62_PeekNavigation(&nav);
-    lc_printf("%s stop: reason_id=%u reason=%s t=%lu dist=%ld yaw_rel=%ld yaw_abs=%ld yaw_err=%ld nav=%u ir=%u raw=0x%02X mask=0x%02X cnt=%u\r\n",
+    lc_printf("%s stop: reason_id=%u reason=%s t=%lu dist=%ld finish=%ld yaw_rel=%ld yaw_prog=%ld nav=%u ir=%u raw=0x%02X mask=0x%02X cnt=%u\r\n",
         tag,
         stop_reason,
-        (stop_reason == 1U) ? "yaw" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? ((align_required != 0U) ? "line_end_aligned" : "line_end") : ((stop_reason == 4U) ? "align_timeout" : ((stop_reason == 5U) ? "uart_stop" : "timeout")))),
+        (stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "arc_done" : ((stop_reason == 5U) ? "uart_stop" : "timeout")),
         elapsed_ms,
         (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
+        (int32_t)TASK2_ARC_FINISH_COUNT,
         (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
-        (nav_ok != 0U) ? abs_i32(nav.yaw_relative_cdeg) : 0,
-        (nav_ok != 0U) ? task2_arc_yaw_align_error(nav.yaw_relative_cdeg) : TASK2_ARC_ALIGN_TARGET_CDEG,
+        (nav_ok != 0U) ? abs_i32(normalize_cdeg(nav.yaw_relative_cdeg - arc_start_yaw)) : 0,
         nav_ok,
         ir_ok,
         (ir_ok != 0U) ? sample.raw : 0xFFU,
@@ -840,7 +833,7 @@ static void run_task2_abcd(void)
     }
     st011_start_pulse(TASK2_POINT_ALARM_MS);
 
-    reason = run_arc_line_follow_segment("TASK2_BC", 0U, 0U);
+    reason = run_arc_line_follow_segment("TASK2_BC", 0U, ARC_TURN_RIGHT);
     if (task2_arc_stop_is_success(reason) == 0U) {
         lc_printf("TASK2 abort after BC: stop_reason=%u\r\n", reason);
         return;
@@ -861,7 +854,7 @@ static void run_task2_abcd(void)
     }
     st011_start_pulse(TASK2_POINT_ALARM_MS);
 
-    reason = run_arc_line_follow_segment("TASK2_DA", 0U, 0U);
+    reason = run_arc_line_follow_segment("TASK2_DA", 0U, ARC_TURN_RIGHT);
     if (task2_arc_stop_is_success(reason) == 0U) {
         lc_printf("TASK2 abort after DA: stop_reason=%u\r\n", reason);
         return;
