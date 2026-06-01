@@ -546,12 +546,10 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         line_centered = ((ir_ok != 0U) &&
             ((sample.line_mask & stop_mask) != 0U) &&
             (abs_i32(sample.error) <= stop_error_max)) ? 1U : 0U;
-        if ((line_search_protect >= 2U) &&
-            ((heading_target_cdeg == 0) ||
-             (line_search_protect >= TASK4_AC_LINE_SEARCH_PROTECT))) {
+        if (line_search_protect >= 2U) {
             line_stop_ready = ((ir_ok != 0U) &&
-                ((sample.line_mask & TASK3_AC_STOP_CENTER_MASK) != 0U) &&
-                (sample.active_count >= TASK3_AC_STOP_MIN_IR_COUNT)) ? 1U : 0U;
+                ((sample.line_mask & TASK3_STRAIGHT_STOP_MASK) != 0U) &&
+                (sample.active_count >= TASK3_STRAIGHT_STOP_MIN_IR_COUNT)) ? 1U : 0U;
         } else {
             line_stop_ready = line_centered;
         }
@@ -1243,6 +1241,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
     uint8_t ir_ok = 0U;
     uint8_t nav_ok = 0U;
     uint8_t b_exit_heading_latched = 0U;
+    uint8_t exit_line_seen = 0U;
 
     IRTracking_Init();
     encoder_reset_distance_counts();
@@ -1250,13 +1249,13 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
     nav_ok = JY62_PeekNavigation(&nav);
     last_yaw_rel = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
 
-    lc_printf("%s start: task3 IR arc dir=%ld base=%d/%d finish=%ld exit_min=%ld yaw_done=%d final_arm=%d entry=%d/%d final_line=%u\r\n",
+    lc_printf("%s start: task3 IR arc dir=%ld base=%d/%d finish=%ld exit_ignore=%ld yaw_done=%d final_arm=%d entry=%d/%d final_line=%u\r\n",
         tag,
         turn_dir,
         TASK3_ARC_B_BASE_PWM,
         TASK3_ARC_A_BASE_PWM,
         (int32_t)TASK3_ARC_FINISH_COUNT,
-        (int32_t)TASK3_ARC_EXIT_MIN_COUNT,
+        (int32_t)TASK3_ARC_EXIT_IGNORE_COUNT,
         TASK3_ARC_YAW_DONE_CDEG,
         TASK3_ARC_EXIT_ARM_CDEG,
         TASK3_ARC_ENTRY_COUNT,
@@ -1286,7 +1285,6 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         uint8_t distance_exit_ready;
         uint8_t final_exit_ready;
         uint8_t b_exit_heading_ready;
-        uint8_t line_seen_now;
         uint8_t exit_candidate;
         uint8_t exit_confirmed;
         uint8_t mode;
@@ -1324,10 +1322,13 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         line_valid = ((ir_ok != 0U) &&
             (sample.line_lost == 0U) &&
             (wide_line == 0U)) ? 1U : 0U;
-        line_seen_now = ((line_seen != 0U) || (line_valid != 0U)) ? 1U : 0U;
         yaw_exit_ready = (yaw_progress >= TASK3_ARC_YAW_DONE_CDEG) ? 1U : 0U;
-        distance_exit_ready = (distance_count >= TASK3_ARC_EXIT_MIN_COUNT) ? 1U : 0U;
+        distance_exit_ready = (distance_count >= TASK3_ARC_EXIT_IGNORE_COUNT) ? 1U : 0U;
+        if ((distance_exit_ready != 0U) && (line_valid != 0U)) {
+            exit_line_seen = 1U;
+        }
         final_exit_ready = ((stop_on_final_line != 0U) &&
+            (distance_exit_ready != 0U) &&
             (yaw_progress >= TASK3_ARC_EXIT_ARM_CDEG)) ? 1U : 0U;
         b_exit_heading_ready = ((stop_on_final_line == 0U) &&
             (nav_ok != 0U) &&
@@ -1336,21 +1337,23 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         exit_candidate = ((ir_ok != 0U) &&
             ((sample.line_lost != 0U) || (wide_line != 0U))) ? 1U : 0U;
         if ((stop_on_final_line == 0U) &&
+            (distance_exit_ready != 0U) &&
             (yaw_exit_ready != 0U) &&
             (b_exit_heading_ready != 0U) &&
-            (line_seen_now != 0U)) {
+            (exit_line_seen != 0U)) {
             b_exit_heading_latched = 1U;
         }
         final_line = ((stop_on_final_line != 0U) &&
             (final_exit_ready != 0U) &&
-            (line_seen_now != 0U) &&
+            (exit_line_seen != 0U) &&
             ((exit_candidate != 0U) ||
              ((ir_ok != 0U) &&
               (sample.active_count >= TASK3_ARC_FINAL_LINE_MIN_COUNT)))) ? 1U : 0U;
         entry_zone = (distance_count < TASK3_ARC_ENTRY_COUNT) ? 1U : 0U;
         if ((stop_on_final_line == 0U) &&
+            (distance_exit_ready != 0U) &&
             (b_exit_heading_latched != 0U) &&
-            (line_seen_now != 0U) &&
+            (exit_line_seen != 0U) &&
             (exit_candidate != 0U)) {
             if (exit_confirm_count < 255U) {
                 exit_confirm_count++;
@@ -1447,7 +1450,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
 
         if (report_elapsed_ms >= TASK3_ARC_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu dist=%ld yaw=%ld ystep=%ld yprog=%ld nav=%u ir=%u valid=%u wide=%u final=%u yrdy=%u drdy=%u frdy=%u brdy=%u bmark=%u xcnt=%u seen=%u lost_cnt=%u entry=%u mode=%u raw=0x%02X mask=0x%02X cnt=%u err=%ld filt=%ld der=%ld turn=%ld L=%ld R=%ld\r\n",
+            lc_printf("%s t=%lu dist=%ld yaw=%ld ystep=%ld yprog=%ld nav=%u ir=%u valid=%u wide=%u final=%u yrdy=%u drdy=%u frdy=%u brdy=%u bmark=%u xcnt=%u seen=%u xseen=%u lost_cnt=%u entry=%u mode=%u raw=0x%02X mask=0x%02X cnt=%u err=%ld filt=%ld der=%ld turn=%ld L=%ld R=%ld\r\n",
                 tag,
                 elapsed_ms,
                 distance_count,
@@ -1466,6 +1469,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
                 b_exit_heading_latched,
                 exit_confirm_count,
                 line_seen,
+                exit_line_seen,
                 lost_count,
                 entry_zone,
                 mode,
@@ -1486,7 +1490,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
     }
     encoder_get_total_counts(&motor_b_delta, &motor_a_delta);
     nav_ok = JY62_PeekNavigation(&nav);
-    lc_printf("%s stop: reason_id=%u reason=%s t=%lu dist=%ld yaw=%ld yprog=%ld bmark=%u xcnt=%u nav=%u ir=%u raw=0x%02X mask=0x%02X cnt=%u\r\n",
+    lc_printf("%s stop: reason_id=%u reason=%s t=%lu dist=%ld yaw=%ld yprog=%ld bmark=%u xseen=%u xcnt=%u nav=%u ir=%u raw=0x%02X mask=0x%02X cnt=%u\r\n",
         tag,
         stop_reason,
         (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "arc_done" : ((stop_reason == 5U) ? "uart_stop" : "timeout"))),
@@ -1495,6 +1499,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
         yaw_progress,
         b_exit_heading_latched,
+        exit_line_seen,
         exit_confirm_count,
         nav_ok,
         ir_ok,
