@@ -5,8 +5,8 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 当前接线：左轮是 B 电机，右轮是 A 电机。 */
-#define STRAIGHT_B_BASE_PWM (501)
-#define STRAIGHT_A_BASE_PWM (569)
+#define STRAIGHT_B_BASE_PWM (532)
+#define STRAIGHT_A_BASE_PWM (543)
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (650)
 
