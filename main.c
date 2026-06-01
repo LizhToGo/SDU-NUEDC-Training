@@ -12,14 +12,12 @@
  * 当前主程序说明：
  *
  * 1. 上电后先由 SysConfig 初始化时钟、GPIO、PWM、UART、I2C 等外设。
- * 2. 初始化编码器状态和 TB6612 电机驱动。
- * 3. 如果 ENABLE_IR_TRACKING_UART_TEST 为 1，进入八路红外循迹模块测试：
- *    通过 I2C 读取模块数据，再通过 UART0 串口打印，电机保持刹车。
- * 4. 如果 ENABLE_IR_TRACKING_UART_TEST 为 0，进入后驱两轮直行 PID 测试：
- *    利用 A/B 电机编码器计数修正左右轮 PWM，使小车尽量直行。
- *
- * 目前等待蓝牙串口模块到货，下一步可以把 UART0 输出接到蓝牙模块，
- * 或者新增控制命令解析，实现无线启动、停车和参数调试。
+ * 2. 初始化 JY62、编码器状态和 TB6612 电机驱动。
+ * 3. 正式模式下等待四个实体任务按键或 UART0 命令：
+ *    A26/01 启动任务一，A24/02 启动任务二，B24/03 启动任务三，
+ *    A22/04 进入任务四占位提示，05 进入轮速测试，00 强制停车。
+ * 4. 调试模式仍可通过 app_config.h 中的开关进入红外打印、
+ *    纯红外循迹或基础轮速 PID 测试。
  */
 
 static uint8_t g_jy62_zero_ready;
@@ -343,6 +341,14 @@ static uint8_t run_straight_to_line_segment(const char *tag,
     uint8_t ir_ok = 0U;
     uint8_t stop_reason = 0U;
     uint8_t stop_nav_ok;
+    int32_t start_heading_corr_divisor;
+    int32_t start_heading_corr_max;
+    int32_t start_distance_corr_divisor;
+    int32_t start_distance_corr_max;
+    int32_t start_line_arm_count;
+    int32_t start_search_start_count;
+    int32_t start_search_sweep_start_count;
+    int32_t start_search_sweep_period_ms;
 
     if (start_alarm_ms != 0U) {
         TB6612_Brake();
@@ -363,7 +369,45 @@ static uint8_t run_straight_to_line_segment(const char *tag,
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
 
-    lc_printf("%s start: zero=%u heading_only=%u fast=%u line_protect=%u B_base=%d A_base=%d ramp=%d/%d h_div=%d h_max=%d d_div=%d d_max=%d\r\n",
+    if (fast_correction != 0U) {
+        start_heading_corr_divisor = TASK2_AB_HEADING_CORR_DIVISOR;
+        start_heading_corr_max = TASK2_AB_HEADING_CORR_MAX;
+        start_distance_corr_divisor = TASK2_AB_DISTANCE_CORR_DIVISOR;
+        start_distance_corr_max = TASK2_AB_DISTANCE_CORR_MAX;
+    } else if ((heading_target_cdeg != 0) && (heading_only != 0U)) {
+        start_heading_corr_divisor = TASK3_BD_HEADING_CORR_DIVISOR;
+        start_heading_corr_max = TASK3_BD_HEADING_CORR_MAX;
+        start_distance_corr_divisor = TASK1_DISTANCE_CORR_DIVISOR;
+        start_distance_corr_max = TASK1_DISTANCE_CORR_MAX;
+    } else if (heading_target_cdeg != 0) {
+        start_heading_corr_divisor = TASK2_CD_HEADING_CORR_DIVISOR;
+        start_heading_corr_max = TASK2_CD_HEADING_CORR_MAX;
+        start_distance_corr_divisor = TASK1_DISTANCE_CORR_DIVISOR;
+        start_distance_corr_max = TASK1_DISTANCE_CORR_MAX;
+    } else {
+        start_heading_corr_divisor = TASK1_HEADING_CORR_DIVISOR;
+        start_heading_corr_max = TASK1_HEADING_CORR_MAX;
+        start_distance_corr_divisor = TASK1_DISTANCE_CORR_DIVISOR;
+        start_distance_corr_max = TASK1_DISTANCE_CORR_MAX;
+    }
+    if (line_search_protect >= 2U) {
+        start_line_arm_count = TASK3_STRAIGHT_LINE_ARM_COUNT;
+        start_search_start_count = TASK3_STRAIGHT_SEARCH_START_COUNT;
+        start_search_sweep_start_count = TASK3_STRAIGHT_SEARCH_SWEEP_START_COUNT;
+        start_search_sweep_period_ms = TASK3_STRAIGHT_SEARCH_SWEEP_PERIOD_MS;
+    } else if (line_search_protect != 0U) {
+        start_line_arm_count = TASK1_B_LINE_ARM_COUNT;
+        start_search_start_count = TASK2_STRAIGHT_SEARCH_START_COUNT;
+        start_search_sweep_start_count = TASK2_STRAIGHT_SEARCH_SWEEP_START_COUNT;
+        start_search_sweep_period_ms = 0;
+    } else {
+        start_line_arm_count = TASK1_B_LINE_ARM_COUNT;
+        start_search_start_count = 0;
+        start_search_sweep_start_count = 0;
+        start_search_sweep_period_ms = 0;
+    }
+
+    lc_printf("%s start: zero=%u heading_only=%u fast=%u line_protect=%u B_base=%d A_base=%d ramp=%d/%d h_div=%ld h_max=%ld d_div=%ld d_max=%ld arm=%ld search=%ld sweep=%ld period=%ld\r\n",
         tag,
         zero_heading,
         heading_only,
@@ -373,10 +417,14 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         STRAIGHT_A_BASE_PWM,
         TASK1_RAMP_B_START_PWM,
         TASK1_RAMP_A_START_PWM,
-        (fast_correction != 0U) ? TASK2_AB_HEADING_CORR_DIVISOR : TASK1_HEADING_CORR_DIVISOR,
-        (fast_correction != 0U) ? TASK2_AB_HEADING_CORR_MAX : TASK1_HEADING_CORR_MAX,
-        (fast_correction != 0U) ? TASK2_AB_DISTANCE_CORR_DIVISOR : TASK1_DISTANCE_CORR_DIVISOR,
-        (fast_correction != 0U) ? TASK2_AB_DISTANCE_CORR_MAX : TASK1_DISTANCE_CORR_MAX);
+        start_heading_corr_divisor,
+        start_heading_corr_max,
+        start_distance_corr_divisor,
+        start_distance_corr_max,
+        start_line_arm_count,
+        start_search_start_count,
+        start_search_sweep_start_count,
+        start_search_sweep_period_ms);
 
     TB6612_SetDifferential(TASK1_RAMP_B_START_PWM, TASK1_RAMP_A_START_PWM);
 
@@ -405,6 +453,15 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         int32_t heading_corr_max;
         int32_t distance_corr_divisor;
         int32_t distance_corr_max;
+        int32_t correction_limit;
+        int32_t line_arm_count;
+        int32_t search_start_count;
+        int32_t search_sweep_start_count;
+        int32_t search_corr_divisor;
+        int32_t search_corr_max;
+        int32_t search_soft_corr;
+        int32_t search_sweep_corr;
+        int32_t search_base_drop;
         int32_t stop_error_max;
         int32_t search_correction;
         int32_t search_direction;
@@ -417,6 +474,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         uint8_t ir_armed;
         uint8_t stop_mask;
         uint8_t line_centered;
+        uint8_t line_stop_ready;
         uint8_t search_mode;
         uint8_t heading_priority;
         uint8_t heading_wobble;
@@ -437,7 +495,9 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         motor_b_speed = abs_i32(motor_b_delta);
         motor_a_speed = abs_i32(motor_a_delta);
         distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
-        ir_armed = (distance_count >= TASK1_B_LINE_ARM_COUNT) ? 1U : 0U;
+        line_arm_count = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_LINE_ARM_COUNT : TASK1_B_LINE_ARM_COUNT;
+        ir_armed = (distance_count >= line_arm_count) ? 1U : 0U;
         nav_ok = JY62_PeekNavigation(&nav);
         heading_raw = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
         heading_gyro_z = (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0;
@@ -462,6 +522,9 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         if (fast_correction != 0U) {
             heading_corr_divisor = TASK2_AB_HEADING_CORR_DIVISOR;
             heading_corr_max = TASK2_AB_HEADING_CORR_MAX;
+        } else if ((heading_target_cdeg != 0) && (heading_only != 0U)) {
+            heading_corr_divisor = TASK3_BD_HEADING_CORR_DIVISOR;
+            heading_corr_max = TASK3_BD_HEADING_CORR_MAX;
         } else if (heading_target_cdeg != 0) {
             heading_corr_divisor = TASK2_CD_HEADING_CORR_DIVISOR;
             heading_corr_max = TASK2_CD_HEADING_CORR_MAX;
@@ -483,15 +546,39 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         line_centered = ((ir_ok != 0U) &&
             ((sample.line_mask & stop_mask) != 0U) &&
             (abs_i32(sample.error) <= stop_error_max)) ? 1U : 0U;
+        if ((line_search_protect >= 2U) && (heading_target_cdeg == 0)) {
+            line_stop_ready = ((ir_ok != 0U) &&
+                ((sample.line_mask & TASK3_AC_STOP_CENTER_MASK) != 0U) &&
+                (sample.active_count >= TASK3_AC_STOP_MIN_IR_COUNT)) ? 1U : 0U;
+        } else {
+            line_stop_ready = line_centered;
+        }
+        search_start_count = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_START_COUNT : TASK2_STRAIGHT_SEARCH_START_COUNT;
+        search_sweep_start_count = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_SWEEP_START_COUNT : TASK2_STRAIGHT_SEARCH_SWEEP_START_COUNT;
+        search_corr_divisor = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_CORR_DIVISOR : TASK2_STRAIGHT_SEARCH_CORR_DIVISOR;
+        search_corr_max = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_CORR_MAX : TASK2_STRAIGHT_SEARCH_CORR_MAX;
+        search_soft_corr = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_SOFT_CORR : TASK2_STRAIGHT_SEARCH_SOFT_CORR;
+        search_sweep_corr = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_SWEEP_CORR : TASK2_STRAIGHT_SEARCH_SWEEP_CORR;
+        search_base_drop = (line_search_protect >= 2U) ?
+            TASK3_STRAIGHT_SEARCH_BASE_DROP : TASK2_STRAIGHT_SEARCH_BASE_DROP;
+        correction_limit = ((line_search_protect >= 2U) ||
+            ((heading_target_cdeg != 0) && (heading_only != 0U))) ?
+            TASK3_STRAIGHT_CORR_MAX : STRAIGHT_CORR_MAX;
         search_mode = ((line_search_protect != 0U) &&
-            ((distance_count >= TASK2_STRAIGHT_SEARCH_START_COUNT) ||
+            ((distance_count >= search_start_count) ||
              ((ir_armed != 0U) && (ir_ok != 0U) &&
               (sample.line_lost == 0U) && (line_centered == 0U)))) ? 1U : 0U;
         if ((ir_armed != 0U) &&
             (ir_ok != 0U) &&
             (sample.line_lost == 0U) &&
             (sample.active_count >= TASK1_STOP_MIN_IR_COUNT) &&
-            ((line_search_protect == 0U) || (line_centered != 0U))) {
+            ((line_search_protect == 0U) || (line_stop_ready != 0U))) {
             stop_reason = 1U;
             break;
         }
@@ -533,10 +620,10 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         }
 
         correction = clamp_i32(balance_correction + heading_correction,
-            -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
+            -correction_limit, correction_limit);
         if (fast_correction != 0U) {
             correction = clamp_i32(correction + TASK2_AB_BIAS_CORRECTION,
-                -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
+                -correction_limit, correction_limit);
         }
 
         base_b_pwm = ramp_i32(TASK1_RAMP_B_START_PWM, STRAIGHT_B_BASE_PWM,
@@ -545,24 +632,30 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             elapsed_ms, TASK1_START_RAMP_MS);
         search_correction = 0;
         if (search_mode != 0U) {
-            base_b_pwm -= TASK2_STRAIGHT_SEARCH_BASE_DROP;
-            base_a_pwm -= TASK2_STRAIGHT_SEARCH_BASE_DROP;
-            search_direction = task2_straight_search_direction(fast_correction,
-                heading_target_cdeg);
-            if ((ir_ok != 0U) && (sample.line_lost == 0U)) {
-                search_correction = clamp_i32(-(sample.error / TASK2_STRAIGHT_SEARCH_CORR_DIVISOR),
-                    -TASK2_STRAIGHT_SEARCH_CORR_MAX,
-                    TASK2_STRAIGHT_SEARCH_CORR_MAX);
-                if (search_correction == 0) {
-                    search_correction = search_direction * TASK2_STRAIGHT_SEARCH_SOFT_CORR;
-                }
-            } else if (distance_count >= TASK2_STRAIGHT_SEARCH_SWEEP_START_COUNT) {
-                search_correction = search_direction * TASK2_STRAIGHT_SEARCH_SWEEP_CORR;
+            base_b_pwm -= search_base_drop;
+            base_a_pwm -= search_base_drop;
+            if (line_search_protect >= 2U) {
+                search_direction =
+                    (((elapsed_ms / TASK3_STRAIGHT_SEARCH_SWEEP_PERIOD_MS) & 0x01U) == 0U) ?
+                    1 : -1;
             } else {
-                search_correction = search_direction * TASK2_STRAIGHT_SEARCH_SOFT_CORR;
+                search_direction = task2_straight_search_direction(fast_correction,
+                    heading_target_cdeg);
+            }
+            if ((ir_ok != 0U) && (sample.line_lost == 0U)) {
+                search_correction = clamp_i32(-(sample.error / search_corr_divisor),
+                    -search_corr_max,
+                    search_corr_max);
+                if (search_correction == 0) {
+                    search_correction = search_direction * search_soft_corr;
+                }
+            } else if (distance_count >= search_sweep_start_count) {
+                search_correction = search_direction * search_sweep_corr;
+            } else {
+                search_correction = search_direction * search_soft_corr;
             }
             correction = clamp_i32(correction + search_correction,
-                -STRAIGHT_CORR_MAX, STRAIGHT_CORR_MAX);
+                -correction_limit, correction_limit);
         }
 
         motor_b_pwm = clamp_i32(base_b_pwm - correction,
@@ -574,14 +667,16 @@ static uint8_t run_straight_to_line_segment(const char *tag,
 
         if (report_elapsed_ms >= TASK1_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu dist=%ld arm=%u fast=%u find=%u centered=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u ir_err=%ld nav=%u h_raw=%ld h_tgt=%ld h_flt=%ld h_use=%ld h_gain=%ld h_wob=%u gzlp=%ld h_corr=%ld hp=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_tgt=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld search=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
+            lc_printf("%s t=%lu dist=%ld arm=%u arm_cnt=%ld fast=%u find=%u centered=%u stopok=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u ir_err=%ld nav=%u h_raw=%ld h_tgt=%ld h_flt=%ld h_use=%ld h_gain=%ld h_wob=%u gzlp=%ld h_corr=%ld hp=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_tgt=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld search=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
                 tag,
                 elapsed_ms,
                 distance_count,
                 ir_armed,
+                line_arm_count,
                 fast_correction,
                 search_mode,
                 line_centered,
+                line_stop_ready,
                 (ir_ok != 0U) ? sample.raw : 0xFFU,
                 (ir_ok != 0U) ? sample.line_mask : 0U,
                 (ir_ok != 0U) ? sample.active_count : 0U,
@@ -636,7 +731,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "uart_stop" : "timeout")),
         elapsed_ms,
         (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
-        TASK1_B_LINE_ARM_COUNT,
+        (line_search_protect >= 2U) ? TASK3_STRAIGHT_LINE_ARM_COUNT : TASK1_B_LINE_ARM_COUNT,
         TASK1_FORCE_STOP_COUNT,
         (ir_ok != 0U) ? sample.raw : 0xFFU,
         (ir_ok != 0U) ? sample.line_mask : 0U,
@@ -1036,6 +1131,466 @@ static void run_task2_abcd(void)
     lc_printf("TASK2 complete: stopped at A, distance reset\r\n");
 }
 
+static uint8_t task3_arc_stop_is_success(uint8_t stop_reason)
+{
+    return ((stop_reason == 1U) || (stop_reason == 3U)) ? 1U : 0U;
+}
+
+static uint8_t run_task3_yaw_align_segment(const char *tag, int32_t target_cdeg)
+{
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint8_t stable_count = 0U;
+    uint8_t stop_reason = 0U;
+
+    TB6612_Brake();
+    delay_ms_with_st011(120);
+    lc_printf("%s start: yaw align target=%ld tol=%d fast=%d slow=%d\r\n",
+        tag,
+        target_cdeg,
+        TASK3_ALIGN_TOL_CDEG,
+        TASK3_ALIGN_FAST_PWM,
+        TASK3_ALIGN_SLOW_PWM);
+
+    while (elapsed_ms < TASK3_ALIGN_TIMEOUT_MS) {
+        int32_t yaw_rel;
+        int32_t error;
+        int32_t turn_pwm;
+        uint8_t nav_ok;
+
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 2U;
+            break;
+        }
+
+        nav_ok = JY62_PeekNavigation(&nav);
+        if (nav_ok == 0U) {
+            TB6612_Brake();
+            continue;
+        }
+
+        yaw_rel = nav.yaw_relative_cdeg;
+        error = normalize_cdeg(target_cdeg - yaw_rel);
+        if (abs_i32(error) <= TASK3_ALIGN_TOL_CDEG) {
+            stable_count++;
+            TB6612_Brake();
+            if (stable_count >= TASK3_ALIGN_STABLE_COUNT) {
+                stop_reason = 1U;
+                break;
+            }
+            continue;
+        }
+
+        stable_count = 0U;
+        turn_pwm = (abs_i32(error) <= TASK3_ALIGN_SLOW_ZONE_CDEG) ?
+            TASK3_ALIGN_SLOW_PWM : TASK3_ALIGN_FAST_PWM;
+        if (error > 0) {
+            TB6612_SetDifferential((int16_t)-turn_pwm, (int16_t)turn_pwm);
+        } else {
+            TB6612_SetDifferential((int16_t)turn_pwm, (int16_t)-turn_pwm);
+        }
+
+        if ((elapsed_ms % 100U) == 0U) {
+            lc_printf("%s t=%lu yaw=%ld target=%ld err=%ld pwm=%ld stable=%u\r\n",
+                tag,
+                elapsed_ms,
+                yaw_rel,
+                target_cdeg,
+                error,
+                turn_pwm,
+                stable_count);
+        }
+    }
+
+    TB6612_Brake();
+    (void)JY62_PeekNavigation(&nav);
+    lc_printf("%s stop: reason=%s t=%lu yaw=%ld target=%ld err=%ld stable=%u\r\n",
+        tag,
+        (stop_reason == 1U) ? "aligned" : ((stop_reason == 2U) ? "uart_stop" : "timeout"),
+        elapsed_ms,
+        nav.yaw_relative_cdeg,
+        target_cdeg,
+        normalize_cdeg(target_cdeg - nav.yaw_relative_cdeg),
+        stable_count);
+
+    return stop_reason;
+}
+
+static uint8_t run_task3_arc_line_follow_segment(const char *tag,
+    int32_t turn_dir,
+    uint8_t stop_on_final_line,
+    uint32_t stop_alarm_ms)
+{
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_delta;
+    int32_t motor_a_delta;
+    int32_t filtered_error = 0;
+    int32_t last_filtered_error = 0;
+    int32_t last_turn = 0;
+    int32_t last_yaw_rel = 0;
+    int32_t yaw_progress = 0;
+    uint8_t stop_reason = 0U;
+    uint8_t line_seen = 0U;
+    uint8_t lost_count = 0U;
+    uint8_t exit_confirm_count = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+    uint8_t b_exit_heading_latched = 0U;
+
+    IRTracking_Init();
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    nav_ok = JY62_PeekNavigation(&nav);
+    last_yaw_rel = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
+
+    lc_printf("%s start: task3 IR arc dir=%ld base=%d/%d finish=%ld exit_min=%ld yaw_done=%d final_arm=%d entry=%d/%d final_line=%u\r\n",
+        tag,
+        turn_dir,
+        TASK3_ARC_B_BASE_PWM,
+        TASK3_ARC_A_BASE_PWM,
+        (int32_t)TASK3_ARC_FINISH_COUNT,
+        (int32_t)TASK3_ARC_EXIT_MIN_COUNT,
+        TASK3_ARC_YAW_DONE_CDEG,
+        TASK3_ARC_EXIT_ARM_CDEG,
+        TASK3_ARC_ENTRY_COUNT,
+        TASK3_ARC_ENTRY_TURN,
+        stop_on_final_line);
+
+    while (elapsed_ms < TASK3_ARC_MAX_RUN_MS) {
+        int32_t motor_b_total;
+        int32_t motor_a_total;
+        int32_t distance_count;
+        int32_t raw_error;
+        int32_t error;
+        int32_t derivative;
+        int32_t turn;
+        int32_t base_b_pwm;
+        int32_t base_a_pwm;
+        int32_t left_pwm;
+        int32_t right_pwm;
+        int32_t yaw_rel;
+        int32_t yaw_delta;
+        int32_t yaw_step;
+        uint8_t line_valid;
+        uint8_t wide_line;
+        uint8_t final_line;
+        uint8_t entry_zone;
+        uint8_t yaw_exit_ready;
+        uint8_t distance_exit_ready;
+        uint8_t final_exit_ready;
+        uint8_t b_exit_heading_ready;
+        uint8_t line_seen_now;
+        uint8_t exit_candidate;
+        uint8_t exit_confirmed;
+        uint8_t mode;
+
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 5U;
+            break;
+        }
+
+        encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+
+        nav_ok = JY62_PeekNavigation(&nav);
+        yaw_rel = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
+        if (nav_ok != 0U) {
+            yaw_delta = normalize_cdeg(yaw_rel - last_yaw_rel);
+            yaw_step = yaw_delta * -turn_dir;
+            if (yaw_step > 0) {
+                yaw_progress += yaw_step;
+            }
+            last_yaw_rel = yaw_rel;
+        } else {
+            yaw_delta = 0;
+            yaw_step = 0;
+        }
+
+        ir_ok = IRTracking_ReadSample(&sample);
+        wide_line = ((ir_ok != 0U) &&
+            (sample.active_count >= TASK3_ARC_WIDE_LINE_MIN_COUNT)) ? 1U : 0U;
+        line_valid = ((ir_ok != 0U) &&
+            (sample.line_lost == 0U) &&
+            (wide_line == 0U)) ? 1U : 0U;
+        line_seen_now = ((line_seen != 0U) || (line_valid != 0U)) ? 1U : 0U;
+        yaw_exit_ready = (yaw_progress >= TASK3_ARC_YAW_DONE_CDEG) ? 1U : 0U;
+        distance_exit_ready = (distance_count >= TASK3_ARC_EXIT_MIN_COUNT) ? 1U : 0U;
+        final_exit_ready = ((stop_on_final_line != 0U) &&
+            (yaw_progress >= TASK3_ARC_EXIT_ARM_CDEG)) ? 1U : 0U;
+        b_exit_heading_ready = ((stop_on_final_line == 0U) &&
+            (nav_ok != 0U) &&
+            (abs_i32(TASK3_B_EXIT_HEADING_TARGET_CDEG - abs_i32(yaw_rel)) <=
+             TASK3_B_EXIT_HEADING_TOL_CDEG)) ? 1U : 0U;
+        exit_candidate = ((ir_ok != 0U) &&
+            ((sample.line_lost != 0U) || (wide_line != 0U))) ? 1U : 0U;
+        if ((stop_on_final_line == 0U) &&
+            (yaw_exit_ready != 0U) &&
+            (b_exit_heading_ready != 0U) &&
+            (line_seen_now != 0U)) {
+            b_exit_heading_latched = 1U;
+        }
+        final_line = ((stop_on_final_line != 0U) &&
+            (final_exit_ready != 0U) &&
+            (line_seen_now != 0U) &&
+            ((exit_candidate != 0U) ||
+             ((ir_ok != 0U) &&
+              (sample.active_count >= TASK3_ARC_FINAL_LINE_MIN_COUNT)))) ? 1U : 0U;
+        entry_zone = (distance_count < TASK3_ARC_ENTRY_COUNT) ? 1U : 0U;
+        if ((stop_on_final_line == 0U) &&
+            (b_exit_heading_latched != 0U) &&
+            (line_seen_now != 0U) &&
+            (exit_candidate != 0U)) {
+            if (exit_confirm_count < 255U) {
+                exit_confirm_count++;
+            }
+        } else {
+            exit_confirm_count = 0U;
+        }
+        exit_confirmed = (exit_confirm_count >= TASK3_ARC_EXIT_CONFIRM_COUNT) ? 1U : 0U;
+
+        if (final_line != 0U) {
+            stop_reason = 1U;
+            break;
+        }
+
+        if (exit_confirmed != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        raw_error = 0;
+        error = 0;
+        derivative = 0;
+        mode = 0U;
+        base_b_pwm = TASK3_ARC_B_BASE_PWM;
+        base_a_pwm = TASK3_ARC_A_BASE_PWM;
+
+        if (line_valid != 0U) {
+            line_seen = 1U;
+            lost_count = 0U;
+            raw_error = sample.error;
+            error = (abs_i32(raw_error) < TASK3_ARC_ERROR_DEADBAND) ? 0 : raw_error;
+            if ((error != 0) &&
+                (filtered_error != 0) &&
+                (((error > 0) && (filtered_error < 0)) ||
+                 ((error < 0) && (filtered_error > 0)))) {
+                filtered_error = error;
+            } else {
+                filtered_error += (error - filtered_error) / TASK3_ARC_ERROR_FILTER_DIVISOR;
+            }
+            derivative = clamp_i32(filtered_error - last_filtered_error,
+                -TASK3_ARC_DERIVATIVE_LIMIT, TASK3_ARC_DERIVATIVE_LIMIT);
+            last_filtered_error = filtered_error;
+            if (entry_zone != 0U) {
+                turn = (filtered_error / TASK3_ARC_ENTRY_KP_DIVISOR) +
+                    (derivative / TASK3_ARC_ENTRY_KD_DIVISOR);
+                turn = clamp_i32(turn,
+                    -TASK3_ARC_ENTRY_TURN_MAX, TASK3_ARC_ENTRY_TURN_MAX);
+            } else {
+                turn = (filtered_error / TASK3_ARC_KP_DIVISOR) +
+                    (derivative / TASK3_ARC_KD_DIVISOR);
+                turn = clamp_i32(turn, -TASK3_ARC_TURN_MAX, TASK3_ARC_TURN_MAX);
+            }
+        } else {
+            if (lost_count < 255U) {
+                lost_count++;
+            }
+            mode = 3U;
+            base_b_pwm -= TASK3_ARC_LOST_BASE_DROP;
+            base_a_pwm -= TASK3_ARC_LOST_BASE_DROP;
+            if (entry_zone != 0U) {
+                turn = turn_dir * TASK3_ARC_ENTRY_LOST_TURN;
+            } else if (line_seen != 0U) {
+                turn = clamp_i32(last_turn,
+                    -TASK3_ARC_LOST_TURN, TASK3_ARC_LOST_TURN);
+                if (turn == 0) {
+                    turn = turn_dir * TASK3_ARC_LOST_TURN;
+                }
+            } else {
+                turn = turn_dir * TASK3_ARC_LOST_TURN;
+            }
+        }
+
+        if (entry_zone != 0U) {
+            mode = (line_valid != 0U) ? 2U : 1U;
+            base_b_pwm = TASK3_ARC_B_BASE_PWM - TASK3_ARC_ENTRY_BASE_DROP;
+            base_a_pwm = TASK3_ARC_A_BASE_PWM - TASK3_ARC_ENTRY_BASE_DROP;
+            turn = clamp_i32(turn + (turn_dir * TASK3_ARC_ENTRY_TURN),
+                -TASK3_ARC_ENTRY_TURN_MAX, TASK3_ARC_ENTRY_TURN_MAX);
+        }
+        if (line_valid != 0U) {
+            last_turn = turn;
+        }
+
+        left_pwm = clamp_i32(base_b_pwm + turn,
+            TASK3_ARC_MIN_PWM, TASK3_ARC_MAX_PWM);
+        right_pwm = clamp_i32(base_a_pwm - turn,
+            TASK3_ARC_MIN_PWM, TASK3_ARC_MAX_PWM);
+        TB6612_SetDifferential((int16_t)left_pwm, (int16_t)right_pwm);
+
+        if (distance_count >= TASK3_ARC_FORCE_STOP_COUNT) {
+            stop_reason = 2U;
+            break;
+        }
+
+        if (report_elapsed_ms >= TASK3_ARC_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            lc_printf("%s t=%lu dist=%ld yaw=%ld ystep=%ld yprog=%ld nav=%u ir=%u valid=%u wide=%u final=%u yrdy=%u drdy=%u frdy=%u brdy=%u bmark=%u xcnt=%u seen=%u lost_cnt=%u entry=%u mode=%u raw=0x%02X mask=0x%02X cnt=%u err=%ld filt=%ld der=%ld turn=%ld L=%ld R=%ld\r\n",
+                tag,
+                elapsed_ms,
+                distance_count,
+                yaw_rel,
+                yaw_step,
+                yaw_progress,
+                nav_ok,
+                ir_ok,
+                line_valid,
+                wide_line,
+                final_line,
+                yaw_exit_ready,
+                distance_exit_ready,
+                final_exit_ready,
+                b_exit_heading_ready,
+                b_exit_heading_latched,
+                exit_confirm_count,
+                line_seen,
+                lost_count,
+                entry_zone,
+                mode,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                error,
+                filtered_error,
+                derivative,
+                turn,
+                left_pwm,
+                right_pwm);
+        }
+    }
+
+    if ((stop_alarm_ms != 0U) || (stop_reason != 3U)) {
+        TB6612_Brake();
+    }
+    encoder_get_total_counts(&motor_b_delta, &motor_a_delta);
+    nav_ok = JY62_PeekNavigation(&nav);
+    lc_printf("%s stop: reason_id=%u reason=%s t=%lu dist=%ld yaw=%ld yprog=%ld bmark=%u xcnt=%u nav=%u ir=%u raw=0x%02X mask=0x%02X cnt=%u\r\n",
+        tag,
+        stop_reason,
+        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "arc_done" : ((stop_reason == 5U) ? "uart_stop" : "timeout"))),
+        elapsed_ms,
+        (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        yaw_progress,
+        b_exit_heading_latched,
+        exit_confirm_count,
+        nav_ok,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U);
+
+    if ((stop_alarm_ms != 0U) && (stop_reason == 1U)) {
+        st011_pulse(stop_alarm_ms);
+    }
+
+    return stop_reason;
+}
+
+static void run_task3_acbda(void)
+{
+    jy62_navigation_t nav;
+    int32_t b_exit_heading;
+    int32_t bd_heading_target;
+    uint8_t reason;
+    uint8_t nav_ok;
+
+    lc_printf("TASK3 start: A->C straight, C->B IR arc, B->D relative straight, D->A immediate IR arc. BAC=%d corr=%d B_rel=%d sensor=%dmm\r\n",
+        TASK3_BAC_THEORY_CDEG,
+        TASK3_AC_TANGENT_CORR_CDEG,
+        TASK3_BD_RELATIVE_TURN_CDEG,
+        TASK3_SENSOR_TO_AXIS_MM);
+
+    reason = run_straight_to_line_segment("TASK3_AC",
+        1U,
+        0,
+        0U,
+        0U,
+        2U,
+        TASK1_START_ALARM_MS,
+        0U);
+    if (reason != 1U) {
+        lc_printf("TASK3 abort after AC: stop_reason=%u\r\n", reason);
+        return;
+    }
+    /* C 点：AC 直线扫到入线后触发。 */
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+
+    reason = run_task3_arc_line_follow_segment("TASK3_CB",
+        TASK3_ARC_TURN_LEFT,
+        0U,
+        0U);
+    if (reason != 3U) {
+        lc_printf("TASK3 abort after CB: stop_reason=%u\r\n", reason);
+        return;
+    }
+    /* B 点：CB 弧线确认出线后触发声光，不刹车，直接进入 BD 边走边转。 */
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+
+    nav_ok = JY62_PeekNavigation(&nav);
+    if (nav_ok == 0U) {
+        TB6612_Brake();
+        lc_printf("TASK3 abort after CB: JY62 invalid before BD\r\n");
+        return;
+    }
+    b_exit_heading = nav.yaw_relative_cdeg;
+    bd_heading_target = normalize_cdeg(b_exit_heading + TASK3_BD_RELATIVE_TURN_CDEG);
+    lc_printf("TASK3_BD target: B_exit=%ld B_nom=%d rel_turn=%d target=%ld mode=relative\r\n",
+        b_exit_heading,
+        TASK3_B_EXIT_HEADING_TARGET_CDEG,
+        TASK3_BD_RELATIVE_TURN_CDEG,
+        bd_heading_target);
+
+    reason = run_straight_to_line_segment("TASK3_BD",
+        0U,
+        bd_heading_target,
+        1U,
+        0U,
+        2U,
+        0U,
+        0U);
+    if (reason != 1U) {
+        lc_printf("TASK3 abort after BD: stop_reason=%u\r\n", reason);
+        return;
+    }
+    /* D 点：BD 直线扫到入线后触发。 */
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+
+    reason = run_task3_arc_line_follow_segment("TASK3_DA",
+        TASK3_ARC_TURN_RIGHT,
+        1U,
+        TASK1_FINISH_ALARM_MS);
+    if (task3_arc_stop_is_success(reason) == 0U) {
+        lc_printf("TASK3 abort after DA: stop_reason=%u\r\n", reason);
+        return;
+    }
+
+    encoder_reset_distance_counts();
+    TB6612_Brake();
+    lc_printf("TASK3 complete: stopped at A, distance reset\r\n");
+}
+
 static void run_task_dispatcher(void)
 {
     task_id_t task_id;
@@ -1065,9 +1620,7 @@ static void run_task_dispatcher(void)
         } else if (task_id == TASK_ID_2) {
             run_task2_abcd();
         } else if (task_id == TASK_ID_3) {
-            TB6612_Brake();
-            st011_pulse(TASK1_START_ALARM_MS);
-            lc_printf("TASK3 not implemented yet: B24/UART0 03 button logic is ready\r\n");
+            run_task3_acbda();
         } else if (task_id == TASK_ID_4) {
             TB6612_Brake();
             st011_pulse(TASK1_START_ALARM_MS);
