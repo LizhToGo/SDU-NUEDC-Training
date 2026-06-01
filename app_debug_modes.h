@@ -55,12 +55,14 @@ static inline void run_motor_pid_stream(void)
 
     /* 每次进入 05 模式都从 0 开始累计，方便标定 COUNTS_PER_CM。 */
     encoder_reset_distance_counts();
-    lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld i_limit=%d corr_max=%d period=%dms report=%dms\r\n",
+    lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld d_div=%d d_max=%d i_limit=%d corr_max=%d period=%dms report=%dms\r\n",
         STRAIGHT_B_BASE_PWM,
         STRAIGHT_A_BASE_PWM,
         PID_TEST_TARGET_SPEED_DIFF,
         PID_TEST_DIFF_FF_GAIN,
         feedforward_correction,
+        PID_TEST_DISTANCE_CORR_DIVISOR,
+        PID_TEST_DISTANCE_CORR_MAX,
         PID_TEST_I_LIMIT,
         PID_TEST_CORR_MAX,
         CONTROL_PERIOD_MS,
@@ -78,6 +80,8 @@ static inline void run_motor_pid_stream(void)
         int32_t i_term;
         int32_t d_term;
         int32_t feedback_correction;
+        int32_t distance_error;
+        int32_t distance_correction;
         int32_t correction;
         int32_t motor_b_pwm;
         int32_t motor_a_pwm;
@@ -90,10 +94,11 @@ static inline void run_motor_pid_stream(void)
             TB6612_Brake();
             encoder_get_total_counts(&motor_b_total, &motor_a_total);
             distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
-            lc_printf("PID motor stream stop: UART0 00 B_total=%ld A_total=%ld dist_count=%ld\r\n",
+            lc_printf("PID motor stream stop: UART0 00 B_total=%ld A_total=%ld dist_count=%ld d_err=%ld\r\n",
                 motor_b_total,
                 motor_a_total,
-                distance_count);
+                distance_count,
+                motor_b_total - motor_a_total);
             return;
         }
 
@@ -112,7 +117,10 @@ static inline void run_motor_pid_stream(void)
             motor_b_speed, motor_a_speed,
             PID_TEST_TARGET_SPEED_DIFF,
             &error, &p_term, &i_term, &d_term);
-        correction = clamp_i32(feedforward_correction + feedback_correction,
+        distance_error = motor_b_total - motor_a_total;
+        distance_correction = clamp_i32(distance_error / PID_TEST_DISTANCE_CORR_DIVISOR,
+            -PID_TEST_DISTANCE_CORR_MAX, PID_TEST_DISTANCE_CORR_MAX);
+        correction = clamp_i32(feedforward_correction + feedback_correction + distance_correction,
             -PID_TEST_CORR_MAX, PID_TEST_CORR_MAX);
 
         /*
@@ -138,12 +146,14 @@ static inline void run_motor_pid_stream(void)
             report_b_speed_sum = 0;
             report_a_speed_sum = 0;
             report_sample_count = 0;
-            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_total=%ld A_total=%ld dist_count=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
+            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_total=%ld A_total=%ld dist_count=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
                 elapsed_ms,
                 motor_b_delta, motor_a_delta,
                 motor_b_total,
                 motor_a_total,
                 distance_count,
+                distance_error,
+                distance_correction,
                 motor_b_speed, motor_a_speed,
                 speed_diff,
                 b_speed_avg,

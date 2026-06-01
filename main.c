@@ -105,6 +105,8 @@ typedef enum {
     TASK_ID_NONE = 0,
     TASK_ID_1 = 1,
     TASK_ID_2 = 2,
+    TASK_ID_3 = 3,
+    TASK_ID_4 = 4,
     TASK_ID_5 = 5,
     TASK_ID_STOP = 255
 } task_id_t;
@@ -131,6 +133,16 @@ static task_id_t task_uart_read_command(void)
             return TASK_ID_2;
         }
 
+        if ((ch == '3') || (ch == 0x03U)) {
+            seen_zero = 0U;
+            return TASK_ID_3;
+        }
+
+        if ((ch == '4') || (ch == 0x04U)) {
+            seen_zero = 0U;
+            return TASK_ID_4;
+        }
+
         if ((ch == '5') || (ch == 0x05U)) {
             seen_zero = 0U;
             return TASK_ID_5;
@@ -143,6 +155,12 @@ static task_id_t task_uart_read_command(void)
             }
             if (ch == '2') {
                 return TASK_ID_2;
+            }
+            if (ch == '3') {
+                return TASK_ID_3;
+            }
+            if (ch == '4') {
+                return TASK_ID_4;
             }
             if (ch == '5') {
                 return TASK_ID_5;
@@ -165,19 +183,27 @@ static uint8_t task_uart_stop_requested(void)
     return (task_uart_read_command() == TASK_ID_STOP) ? 1U : 0U;
 }
 
-static uint8_t task_button_pin_is_pressed(uint32_t pin)
+static uint8_t task_button_pin_is_pressed(GPIO_Regs *port, uint32_t pin)
 {
-    return ((DL_GPIO_readPins(KEYS_PORT, pin) & pin) == 0U) ? 1U : 0U;
+    return ((DL_GPIO_readPins(port, pin) & pin) == 0U) ? 1U : 0U;
 }
 
 static task_id_t task_button_read(void)
 {
-    if (task_button_pin_is_pressed(KEYS_KEY1_PIN) != 0U) {
+    if (task_button_pin_is_pressed(KEYS_A_PORT, KEYS_A_KEY1_PIN) != 0U) {
         return TASK_ID_1;
     }
 
-    if (task_button_pin_is_pressed(KEYS_KEY2_PIN) != 0U) {
+    if (task_button_pin_is_pressed(KEYS_A_PORT, KEYS_A_KEY2_PIN) != 0U) {
         return TASK_ID_2;
+    }
+
+    if (task_button_pin_is_pressed(KEYS_B_PORT, KEYS_B_KEY3_PIN) != 0U) {
+        return TASK_ID_3;
+    }
+
+    if (task_button_pin_is_pressed(KEYS_A_PORT, KEYS_A_KEY4_PIN) != 0U) {
+        return TASK_ID_4;
     }
 
     return TASK_ID_NONE;
@@ -336,6 +362,21 @@ static uint8_t run_straight_to_line_segment(const char *tag,
     heading_filter_reset(&heading_filter);
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
+
+    lc_printf("%s start: zero=%u heading_only=%u fast=%u line_protect=%u B_base=%d A_base=%d ramp=%d/%d h_div=%d h_max=%d d_div=%d d_max=%d\r\n",
+        tag,
+        zero_heading,
+        heading_only,
+        fast_correction,
+        line_search_protect,
+        STRAIGHT_B_BASE_PWM,
+        STRAIGHT_A_BASE_PWM,
+        TASK1_RAMP_B_START_PWM,
+        TASK1_RAMP_A_START_PWM,
+        (fast_correction != 0U) ? TASK2_AB_HEADING_CORR_DIVISOR : TASK1_HEADING_CORR_DIVISOR,
+        (fast_correction != 0U) ? TASK2_AB_HEADING_CORR_MAX : TASK1_HEADING_CORR_MAX,
+        (fast_correction != 0U) ? TASK2_AB_DISTANCE_CORR_DIVISOR : TASK1_DISTANCE_CORR_DIVISOR,
+        (fast_correction != 0U) ? TASK2_AB_DISTANCE_CORR_MAX : TASK1_DISTANCE_CORR_MAX);
 
     TB6612_SetDifferential(TASK1_RAMP_B_START_PWM, TASK1_RAMP_A_START_PWM);
 
@@ -921,9 +962,9 @@ static uint8_t task2_arc_stop_is_success(uint8_t stop_reason)
 static void run_task1_ab(void)
 {
     (void)run_straight_to_line_segment("TASK1_AB",
-        0U,
-        0,
         1U,
+        0,
+        0U,
         0U,
         0U,
         TASK1_START_ALARM_MS,
@@ -1001,7 +1042,7 @@ static void run_task_dispatcher(void)
 
     st011_set_active(0U);
     TB6612_Brake();
-    lc_printf("TASK ready: UART0 01 or PB00=task1, UART0 02 or PB21=task2, UART0 05=PWM test, UART0 00=stop\r\n");
+    lc_printf("TASK ready: A26/UART0 01=task1, A24/UART0 02=task2, B24/UART0 03=task3, A22/UART0 04=task4, UART0 05=PWM test, UART0 00=stop\r\n");
 
     while (1) {
         task_id = wait_task_uart_command();
@@ -1011,15 +1052,26 @@ static void run_task_dispatcher(void)
             continue;
         }
 
-        if ((task_id == TASK_ID_1) || (task_id == TASK_ID_2)) {
+        if (task_id == TASK_ID_2) {
             TB6612_Brake();
             (void)jy62_zero_to_current("task_start_zero", 0U);
+        } else if ((task_id == TASK_ID_1) ||
+            (task_id == TASK_ID_3) || (task_id == TASK_ID_4)) {
+            TB6612_Brake();
         }
 
         if (task_id == TASK_ID_1) {
             run_task1_ab();
         } else if (task_id == TASK_ID_2) {
             run_task2_abcd();
+        } else if (task_id == TASK_ID_3) {
+            TB6612_Brake();
+            st011_pulse(TASK1_START_ALARM_MS);
+            lc_printf("TASK3 not implemented yet: B24/UART0 03 button logic is ready\r\n");
+        } else if (task_id == TASK_ID_4) {
+            TB6612_Brake();
+            st011_pulse(TASK1_START_ALARM_MS);
+            lc_printf("TASK4 not implemented yet: A22/UART0 04 button logic is ready\r\n");
         } else if (task_id == TASK_ID_5) {
             TB6612_Brake();
             run_motor_pid_stream();
