@@ -15,7 +15,7 @@
  * 2. 初始化 JY62、编码器状态和 TB6612 电机驱动。
  * 3. 正式模式下等待四个实体任务按键或 UART0 命令：
  *    A26/01 启动任务一，A24/02 启动任务二，B24/03 启动任务三，
- *    A22/04 进入任务四占位提示，05 进入轮速测试，00 强制停车。
+ *    A22/04 启动任务四，05 进入轮速测试，00 强制停车。
  * 4. 调试模式仍可通过 app_config.h 中的开关进入红外打印、
  *    纯红外循迹或基础轮速 PID 测试。
  */
@@ -374,7 +374,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         start_heading_corr_max = TASK2_AB_HEADING_CORR_MAX;
         start_distance_corr_divisor = TASK2_AB_DISTANCE_CORR_DIVISOR;
         start_distance_corr_max = TASK2_AB_DISTANCE_CORR_MAX;
-    } else if ((heading_target_cdeg != 0) && (heading_only != 0U)) {
+    } else if (heading_only != 0U) {
         start_heading_corr_divisor = TASK3_BD_HEADING_CORR_DIVISOR;
         start_heading_corr_max = TASK3_BD_HEADING_CORR_MAX;
         start_distance_corr_divisor = TASK1_DISTANCE_CORR_DIVISOR;
@@ -513,7 +513,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
                 &heading_filtered,
                 &heading_gain,
                 &heading_wobble) : 0;
-        if (heading_target_cdeg != 0) {
+        if ((heading_target_cdeg != 0) || (heading_only != 0U)) {
             heading_error = heading_raw_error;
         } else if ((fast_correction != 0U) && (nav_ok != 0U)) {
             heading_error = (abs_i32(heading_raw_error) < TASK2_AB_HEADING_DEADBAND_CDEG) ?
@@ -522,7 +522,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         if (fast_correction != 0U) {
             heading_corr_divisor = TASK2_AB_HEADING_CORR_DIVISOR;
             heading_corr_max = TASK2_AB_HEADING_CORR_MAX;
-        } else if ((heading_target_cdeg != 0) && (heading_only != 0U)) {
+        } else if (heading_only != 0U) {
             heading_corr_divisor = TASK3_BD_HEADING_CORR_DIVISOR;
             heading_corr_max = TASK3_BD_HEADING_CORR_MAX;
         } else if (heading_target_cdeg != 0) {
@@ -533,7 +533,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             heading_corr_max = TASK1_HEADING_CORR_MAX;
         }
         heading_correction = (heading_error * TASK1_HEADING_CORR_SIGN) / heading_corr_divisor;
-        if (heading_target_cdeg != 0) {
+        if ((heading_target_cdeg != 0) || (heading_only != 0U)) {
             heading_correction -= heading_gyro_z / TASK2_CD_HEADING_GYRO_DAMP_DIVISOR;
         }
         heading_correction = clamp_i32(heading_correction, -heading_corr_max, heading_corr_max);
@@ -546,7 +546,9 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         line_centered = ((ir_ok != 0U) &&
             ((sample.line_mask & stop_mask) != 0U) &&
             (abs_i32(sample.error) <= stop_error_max)) ? 1U : 0U;
-        if ((line_search_protect >= 2U) && (heading_target_cdeg == 0)) {
+        if ((line_search_protect >= 2U) &&
+            ((heading_target_cdeg == 0) ||
+             (line_search_protect >= TASK4_AC_LINE_SEARCH_PROTECT))) {
             line_stop_ready = ((ir_ok != 0U) &&
                 ((sample.line_mask & TASK3_AC_STOP_CENTER_MASK) != 0U) &&
                 (sample.active_count >= TASK3_AC_STOP_MIN_IR_COUNT)) ? 1U : 0U;
@@ -567,8 +569,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             TASK3_STRAIGHT_SEARCH_SWEEP_CORR : TASK2_STRAIGHT_SEARCH_SWEEP_CORR;
         search_base_drop = (line_search_protect >= 2U) ?
             TASK3_STRAIGHT_SEARCH_BASE_DROP : TASK2_STRAIGHT_SEARCH_BASE_DROP;
-        correction_limit = ((line_search_protect >= 2U) ||
-            ((heading_target_cdeg != 0) && (heading_only != 0U))) ?
+        correction_limit = ((line_search_protect >= 2U) || (heading_only != 0U)) ?
             TASK3_STRAIGHT_CORR_MAX : STRAIGHT_CORR_MAX;
         search_mode = ((line_search_protect != 0U) &&
             ((distance_count >= search_start_count) ||
@@ -1360,7 +1361,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         exit_confirmed = (exit_confirm_count >= TASK3_ARC_EXIT_CONFIRM_COUNT) ? 1U : 0U;
 
         if (final_line != 0U) {
-            stop_reason = 1U;
+            stop_reason = (stop_alarm_ms == 0U) ? 3U : 1U;
             break;
         }
 
@@ -1591,6 +1592,174 @@ static void run_task3_acbda(void)
     lc_printf("TASK3 complete: stopped at A, distance reset\r\n");
 }
 
+static const char *task4_segment_tag(uint8_t lap_index, uint8_t segment_index)
+{
+    static const char * const tags[TASK4_LAP_COUNT][4] = {
+        {"TASK4_L1_AC", "TASK4_L1_CB", "TASK4_L1_BD", "TASK4_L1_DA"},
+        {"TASK4_L2_AC", "TASK4_L2_CB", "TASK4_L2_BD", "TASK4_L2_DA"},
+        {"TASK4_L3_AC", "TASK4_L3_CB", "TASK4_L3_BD", "TASK4_L3_DA"},
+        {"TASK4_L4_AC", "TASK4_L4_CB", "TASK4_L4_BD", "TASK4_L4_DA"}
+    };
+
+    if ((lap_index < TASK4_LAP_COUNT) && (segment_index < 4U)) {
+        return tags[lap_index][segment_index];
+    }
+
+    return "TASK4_SEG";
+}
+
+static uint8_t run_task4_lap(uint8_t lap_index,
+    int32_t ac_heading_target,
+    uint8_t zero_ac_heading,
+    uint8_t final_lap,
+    int32_t *a_exit_heading_out)
+{
+    jy62_navigation_t nav;
+    const char *tag_ac = task4_segment_tag(lap_index, 0U);
+    const char *tag_cb = task4_segment_tag(lap_index, 1U);
+    const char *tag_bd = task4_segment_tag(lap_index, 2U);
+    const char *tag_da = task4_segment_tag(lap_index, 3U);
+    int32_t b_exit_heading;
+    int32_t bd_heading_target;
+    uint8_t reason;
+    uint8_t nav_ok;
+
+    lc_printf("TASK4 lap=%u start: AC_target=%ld zero=%u final=%u\r\n",
+        (uint8_t)(lap_index + 1U),
+        ac_heading_target,
+        zero_ac_heading,
+        final_lap);
+
+    reason = run_straight_to_line_segment(tag_ac,
+        zero_ac_heading,
+        ac_heading_target,
+        (zero_ac_heading == 0U) ? 1U : 0U,
+        0U,
+        (zero_ac_heading == 0U) ? TASK4_AC_LINE_SEARCH_PROTECT : 2U,
+        (zero_ac_heading != 0U) ? TASK1_START_ALARM_MS : 0U,
+        0U);
+    if (reason != 1U) {
+        lc_printf("TASK4 abort after %s: lap=%u stop_reason=%u\r\n",
+            tag_ac,
+            (uint8_t)(lap_index + 1U),
+            reason);
+        return 0U;
+    }
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+
+    reason = run_task3_arc_line_follow_segment(tag_cb,
+        TASK3_ARC_TURN_LEFT,
+        0U,
+        0U);
+    if (reason != 3U) {
+        lc_printf("TASK4 abort after %s: lap=%u stop_reason=%u\r\n",
+            tag_cb,
+            (uint8_t)(lap_index + 1U),
+            reason);
+        return 0U;
+    }
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+
+    nav_ok = JY62_PeekNavigation(&nav);
+    if (nav_ok == 0U) {
+        TB6612_Brake();
+        lc_printf("TASK4 abort after %s: JY62 invalid before BD\r\n", tag_cb);
+        return 0U;
+    }
+    b_exit_heading = nav.yaw_relative_cdeg;
+    bd_heading_target = normalize_cdeg(b_exit_heading + TASK3_BD_RELATIVE_TURN_CDEG);
+    lc_printf("%s target: lap=%u B_exit=%ld rel_turn=%d target=%ld mode=relative\r\n",
+        tag_bd,
+        (uint8_t)(lap_index + 1U),
+        b_exit_heading,
+        TASK3_BD_RELATIVE_TURN_CDEG,
+        bd_heading_target);
+
+    reason = run_straight_to_line_segment(tag_bd,
+        0U,
+        bd_heading_target,
+        1U,
+        0U,
+        2U,
+        0U,
+        0U);
+    if (reason != 1U) {
+        lc_printf("TASK4 abort after %s: lap=%u stop_reason=%u\r\n",
+            tag_bd,
+            (uint8_t)(lap_index + 1U),
+            reason);
+        return 0U;
+    }
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+
+    reason = run_task3_arc_line_follow_segment(tag_da,
+        TASK3_ARC_TURN_RIGHT,
+        1U,
+        (final_lap != 0U) ? TASK1_FINISH_ALARM_MS : 0U);
+    if (task3_arc_stop_is_success(reason) == 0U) {
+        lc_printf("TASK4 abort after %s: lap=%u stop_reason=%u\r\n",
+            tag_da,
+            (uint8_t)(lap_index + 1U),
+            reason);
+        return 0U;
+    }
+
+    if (final_lap != 0U) {
+        return 1U;
+    }
+
+    st011_start_pulse(TASK3_POINT_ALARM_MS);
+    nav_ok = JY62_PeekNavigation(&nav);
+    if (nav_ok == 0U) {
+        TB6612_Brake();
+        lc_printf("TASK4 abort after %s: JY62 invalid before next AC\r\n", tag_da);
+        return 0U;
+    }
+
+    *a_exit_heading_out = nav.yaw_relative_cdeg;
+    lc_printf("TASK4_A target seed: lap=%u A_exit=%ld rel_turn=%d next_target=%ld mode=relative\r\n",
+        (uint8_t)(lap_index + 1U),
+        *a_exit_heading_out,
+        TASK4_AC_RELATIVE_TURN_CDEG,
+        normalize_cdeg(*a_exit_heading_out + TASK4_AC_RELATIVE_TURN_CDEG));
+
+    return 1U;
+}
+
+static void run_task4_four_laps(void)
+{
+    uint8_t lap_index;
+    int32_t ac_heading_target = 0;
+    int32_t a_exit_heading = 0;
+
+    lc_printf("TASK4 start: task3 route x%d, B_rel=%d, A_rel=%d\r\n",
+        TASK4_LAP_COUNT,
+        TASK3_BD_RELATIVE_TURN_CDEG,
+        TASK4_AC_RELATIVE_TURN_CDEG);
+
+    for (lap_index = 0U; lap_index < TASK4_LAP_COUNT; lap_index++) {
+        uint8_t final_lap = ((lap_index + 1U) >= TASK4_LAP_COUNT) ? 1U : 0U;
+        uint8_t zero_ac_heading = (lap_index == 0U) ? 1U : 0U;
+
+        if (run_task4_lap(lap_index,
+            ac_heading_target,
+            zero_ac_heading,
+            final_lap,
+            &a_exit_heading) == 0U) {
+            TB6612_Brake();
+            return;
+        }
+
+        if (final_lap == 0U) {
+            ac_heading_target = normalize_cdeg(a_exit_heading + TASK4_AC_RELATIVE_TURN_CDEG);
+        }
+    }
+
+    encoder_reset_distance_counts();
+    TB6612_Brake();
+    lc_printf("TASK4 complete: %d laps stopped at A, distance reset\r\n", TASK4_LAP_COUNT);
+}
+
 static void run_task_dispatcher(void)
 {
     task_id_t task_id;
@@ -1622,9 +1791,7 @@ static void run_task_dispatcher(void)
         } else if (task_id == TASK_ID_3) {
             run_task3_acbda();
         } else if (task_id == TASK_ID_4) {
-            TB6612_Brake();
-            st011_pulse(TASK1_START_ALARM_MS);
-            lc_printf("TASK4 not implemented yet: A22/UART0 04 button logic is ready\r\n");
+            run_task4_four_laps();
         } else if (task_id == TASK_ID_5) {
             TB6612_Brake();
             run_motor_pid_stream();

@@ -236,6 +236,11 @@
 #define TASK3_ARC_MAX_RUN_MS          (12000)
 #define TASK3_ARC_REPORT_PERIOD_MS    (100)
 
+/* 任务四：按任务三路线连续跑 4 圈。A 点换圈转角与 B 点等大反向。 */
+#define TASK4_LAP_COUNT               (4)
+#define TASK4_AC_RELATIVE_TURN_CDEG   (-TASK3_BD_RELATIVE_TURN_CDEG)
+#define TASK4_AC_LINE_SEARCH_PROTECT  (3)
+
 /* 编码器方向符号：统一让前进方向计数为正。 */
 #define ENCODER_MOTOR_A_FORWARD_SIGN (-1)
 #define ENCODER_MOTOR_B_FORWARD_SIGN (1)
