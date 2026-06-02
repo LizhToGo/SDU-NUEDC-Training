@@ -37,4 +37,5 @@ subdir_vars.mk
 Thumbs.db
 .DS_Store
 
+.codegraph
 AGENT.md
