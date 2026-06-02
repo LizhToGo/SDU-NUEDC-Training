@@ -191,8 +191,8 @@
 #define TASK3_ARC_TURN_RIGHT          (1)
 #define TASK3_BAC_THEORY_CDEG         (3866)
 #define TASK3_AC_TANGENT_CORR_CDEG    (4339)
-#define TASK3_BD_RELATIVE_TURN_CDEG   (6700)
-#define TASK3_STRAIGHT_STOP_MASK      (0x7EU)
+#define TASK3_BD_RELATIVE_TURN_CDEG   (6600)
+#define TASK3_STRAIGHT_STOP_MASK      (0xFFU)
 #define TASK3_STRAIGHT_STOP_MIN_IR_COUNT (1)
 #define TASK3_STRAIGHT_CORR_MAX       (155)
 #define TASK3_BD_HEADING_CORR_DIVISOR (5)
@@ -238,8 +238,9 @@
 
 /* Task4: run the Task3 route for 4 laps. */
 #define TASK4_LAP_COUNT               (4)
-/* Task4 A exit mirrors B->D: A_exit - 67 deg sets the next AC heading. */
-#define TASK4_AC_RELATIVE_TURN_CDEG   (-TASK3_BD_RELATIVE_TURN_CDEG)
+/* Task4 straight headings use absolute JY62 relative angles. */
+#define TASK4_AC_HEADING_TARGET_CDEG  (0)
+#define TASK4_BD_HEADING_TARGET_CDEG  (-10200)
 #define TASK4_AC_LINE_SEARCH_PROTECT  (2)
 #define TASK4_AC_START_TURN_COUNT     (3400)
 #define TASK4_AC_START_HEADING_CORR_DIVISOR (3)

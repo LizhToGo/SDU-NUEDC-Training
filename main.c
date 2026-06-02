@@ -2074,12 +2074,11 @@ static uint8_t run_task4_lap(uint8_t lap_index,
         return 0U;
     }
     b_exit_heading = nav.yaw_relative_cdeg;
-    bd_heading_target = normalize_cdeg(b_exit_heading + TASK3_BD_RELATIVE_TURN_CDEG);
-    lc_printf("%s target: lap=%u B_exit=%ld rel_turn=%d target=%ld mode=relative\r\n",
+    bd_heading_target = TASK4_BD_HEADING_TARGET_CDEG;
+    lc_printf("%s target: lap=%u B_exit=%ld target=%ld mode=absolute\r\n",
         tag_bd,
         (uint8_t)(lap_index + 1U),
         b_exit_heading,
-        TASK3_BD_RELATIVE_TURN_CDEG,
         bd_heading_target);
 
     reason = run_straight_to_line_segment(tag_bd,
@@ -2123,11 +2122,10 @@ static uint8_t run_task4_lap(uint8_t lap_index,
     }
 
     *a_exit_heading_out = nav.yaw_relative_cdeg;
-    lc_printf("TASK4_A target seed: lap=%u A_exit=%ld rel_turn=%d next_target=%ld mode=relative\r\n",
+    lc_printf("TASK4_A target seed: lap=%u A_exit=%ld next_target=%d mode=absolute\r\n",
         (uint8_t)(lap_index + 1U),
         *a_exit_heading_out,
-        TASK4_AC_RELATIVE_TURN_CDEG,
-        normalize_cdeg(*a_exit_heading_out + TASK4_AC_RELATIVE_TURN_CDEG));
+        TASK4_AC_HEADING_TARGET_CDEG);
 
     return 1U;
 }
@@ -2135,13 +2133,13 @@ static uint8_t run_task4_lap(uint8_t lap_index,
 static void run_task4_four_laps(void)
 {
     uint8_t lap_index;
-    int32_t ac_heading_target = 0;
+    int32_t ac_heading_target = TASK4_AC_HEADING_TARGET_CDEG;
     int32_t a_exit_heading = 0;
 
-    lc_printf("TASK4 start: task3 route x%d, B_rel=%d, A_rel=%d\r\n",
+    lc_printf("TASK4 start: task3 route x%d, AC_abs=%d, BD_abs=%d\r\n",
         TASK4_LAP_COUNT,
-        TASK3_BD_RELATIVE_TURN_CDEG,
-        TASK4_AC_RELATIVE_TURN_CDEG);
+        TASK4_AC_HEADING_TARGET_CDEG,
+        TASK4_BD_HEADING_TARGET_CDEG);
 
     for (lap_index = 0U; lap_index < TASK4_LAP_COUNT; lap_index++) {
         uint8_t final_lap = ((lap_index + 1U) >= TASK4_LAP_COUNT) ? 1U : 0U;
@@ -2157,7 +2155,7 @@ static void run_task4_four_laps(void)
         }
 
         if (final_lap == 0U) {
-            ac_heading_target = normalize_cdeg(a_exit_heading + TASK4_AC_RELATIVE_TURN_CDEG);
+            ac_heading_target = TASK4_AC_HEADING_TARGET_CDEG;
         }
     }
 
