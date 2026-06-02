@@ -430,22 +430,6 @@ static const char *task4_bd_turn_tag(const char *tag)
     return "TASK4_D_TURN";
 }
 
-static const char *task4_a_turn_tag(uint8_t lap_index)
-{
-    static const char * const turn_tags[TASK4_LAP_COUNT] = {
-        "TASK4_L1_A_TURN",
-        "TASK4_L2_A_TURN",
-        "TASK4_L3_A_TURN",
-        "TASK4_L4_A_TURN"
-    };
-
-    if (lap_index < TASK4_LAP_COUNT) {
-        return turn_tags[lap_index];
-    }
-
-    return "TASK4_A_TURN";
-}
-
 static void task4_print_ac_line_debug(const char *tag,
     uint32_t elapsed_ms,
     int32_t distance_count,
@@ -624,6 +608,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         uint8_t line_centered;
         uint8_t line_stop_ready;
         uint8_t search_mode;
+        uint8_t task4_ac_start_boost;
         uint8_t heading_priority;
         uint8_t heading_wobble;
 
@@ -643,6 +628,9 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         motor_b_speed = abs_i32(motor_b_delta);
         motor_a_speed = abs_i32(motor_a_delta);
         distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+        task4_ac_start_boost = ((heading_only != 0U) &&
+            (task4_ac_debug_enabled(tag) != 0U) &&
+            (distance_count < TASK4_AC_START_TURN_COUNT)) ? 1U : 0U;
         line_arm_count = (line_search_protect >= 2U) ?
             TASK3_STRAIGHT_LINE_ARM_COUNT : TASK1_B_LINE_ARM_COUNT;
         ir_armed = (distance_count >= line_arm_count) ? 1U : 0U;
@@ -667,7 +655,10 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             heading_error = (abs_i32(heading_raw_error) < TASK2_AB_HEADING_DEADBAND_CDEG) ?
                 0 : heading_raw_error;
         }
-        if (fast_correction != 0U) {
+        if (task4_ac_start_boost != 0U) {
+            heading_corr_divisor = TASK4_AC_START_HEADING_CORR_DIVISOR;
+            heading_corr_max = TASK4_AC_START_HEADING_CORR_MAX;
+        } else if (fast_correction != 0U) {
             heading_corr_divisor = TASK2_AB_HEADING_CORR_DIVISOR;
             heading_corr_max = TASK2_AB_HEADING_CORR_MAX;
         } else if (heading_only != 0U) {
@@ -715,8 +706,10 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             TASK3_STRAIGHT_SEARCH_SWEEP_CORR : TASK2_STRAIGHT_SEARCH_SWEEP_CORR;
         search_base_drop = (line_search_protect >= 2U) ?
             TASK3_STRAIGHT_SEARCH_BASE_DROP : TASK2_STRAIGHT_SEARCH_BASE_DROP;
-        correction_limit = ((line_search_protect >= 2U) || (heading_only != 0U)) ?
-            TASK3_STRAIGHT_CORR_MAX : STRAIGHT_CORR_MAX;
+        correction_limit = (task4_ac_start_boost != 0U) ?
+            TASK4_AC_START_CORR_MAX :
+            (((line_search_protect >= 2U) || (heading_only != 0U)) ?
+                TASK3_STRAIGHT_CORR_MAX : STRAIGHT_CORR_MAX);
         search_mode = ((line_search_protect != 0U) &&
             ((distance_count >= search_start_count) ||
              ((ir_armed != 0U) && (ir_ok != 0U) &&
@@ -870,7 +863,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
 
         if (report_elapsed_ms >= TASK1_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu dist=%ld arm=%u arm_cnt=%ld fast=%u find=%u centered=%u stopok=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u ir_err=%ld nav=%u h_raw=%ld h_tgt=%ld h_flt=%ld h_use=%ld h_gain=%ld h_wob=%u gzlp=%ld h_corr=%ld hp=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_tgt=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld search=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
+            lc_printf("%s t=%lu dist=%ld arm=%u arm_cnt=%ld fast=%u find=%u centered=%u stopok=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u ir_err=%ld nav=%u h_raw=%ld h_tgt=%ld h_flt=%ld h_use=%ld h_gain=%ld h_wob=%u gzlp=%ld h_corr=%ld hp=%u boost=%u B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_tgt=%ld v_err=%ld P=%ld I=%ld D=%ld v_corr=%ld bal=%ld search=%ld corr=%ld base=%ld/%ld B_pwm=%ld A_pwm=%ld\r\n",
                 tag,
                 elapsed_ms,
                 distance_count,
@@ -896,6 +889,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
                 heading_gyro_z,
                 heading_correction,
                 heading_priority,
+                task4_ac_start_boost,
                 motor_b_total,
                 motor_a_total,
                 distance_error,
@@ -2043,35 +2037,6 @@ static uint8_t run_task4_lap(uint8_t lap_index,
         ac_heading_target,
         zero_ac_heading,
         final_lap);
-
-    if (zero_ac_heading == 0U) {
-        lc_printf("%s preturn: lap=%u rel_turn=%d target=%ld pwm=%d/%d\r\n",
-            tag_ac,
-            (uint8_t)(lap_index + 1U),
-            TASK4_AC_RELATIVE_TURN_CDEG,
-            ac_heading_target,
-            TASK4_A_TURN_B_PWM,
-            TASK4_A_TURN_A_PWM);
-        reason = run_line_fast_turn(task4_a_turn_tag(lap_index),
-            0U,
-            0,
-            0,
-            ac_heading_target,
-            ac_heading_target,
-            TASK4_A_TURN_B_PWM,
-            TASK4_A_TURN_A_PWM,
-            0,
-            1U,
-            0U,
-            0U,
-            0U);
-        if (reason == 0U) {
-            lc_printf("TASK4 abort before %s: lap=%u A preturn failed\r\n",
-                tag_ac,
-                (uint8_t)(lap_index + 1U));
-            return 0U;
-        }
-    }
 
     reason = run_straight_to_line_segment(tag_ac,
         zero_ac_heading,
