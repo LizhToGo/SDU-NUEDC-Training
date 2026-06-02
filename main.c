@@ -330,11 +330,142 @@ static int32_t task2_straight_search_direction(uint8_t fast_correction,
     return 1;
 }
 
-static uint8_t run_task6_c_fast_left_turn(const char *tag,
+static uint8_t run_line_fast_turn(const char *tag,
     uint32_t ac_elapsed_ms,
     int32_t ac_distance_count,
     const ir_tracking_sample_t *line_sample,
-    int32_t line_yaw_cdeg);
+    int32_t line_yaw_cdeg,
+    int32_t target_cdeg,
+    int16_t motor_b_pwm,
+    int16_t motor_a_pwm,
+    int32_t handoff_turn_dir,
+    uint8_t target_is_absolute,
+    uint8_t enable_line_stop,
+    uint8_t brake_after_turn,
+    uint8_t report_samples);
+
+static uint8_t task4_ac_debug_enabled(const char *tag)
+{
+    return ((tag[0] == 'T') &&
+        (tag[1] == 'A') &&
+        (tag[2] == 'S') &&
+        (tag[3] == 'K') &&
+        (tag[4] == '4') &&
+        (tag[5] == '_') &&
+        (tag[6] == 'L') &&
+        (tag[8] == '_') &&
+        (tag[9] == 'A') &&
+        (tag[10] == 'C') &&
+        (tag[11] == '\0')) ? 1U : 0U;
+}
+
+static const char *task4_ac_turn_tag(const char *tag)
+{
+    static const char * const turn_tags[TASK4_LAP_COUNT] = {
+        "TASK4_L1_C_TURN",
+        "TASK4_L2_C_TURN",
+        "TASK4_L3_C_TURN",
+        "TASK4_L4_C_TURN"
+    };
+    uint8_t lap_index = (uint8_t)(tag[7] - '1');
+
+    if (lap_index < TASK4_LAP_COUNT) {
+        return turn_tags[lap_index];
+    }
+
+    return "TASK4_C_TURN";
+}
+
+static uint8_t task4_bd_debug_enabled(const char *tag)
+{
+    if ((tag[0] == 'T') &&
+        (tag[1] == 'A') &&
+        (tag[2] == 'S') &&
+        (tag[3] == 'K') &&
+        (tag[4] == '3') &&
+        (tag[5] == '_') &&
+        (tag[6] == 'B') &&
+        (tag[7] == 'D') &&
+        (tag[8] == '\0')) {
+        return 1U;
+    }
+
+    return ((tag[0] == 'T') &&
+        (tag[1] == 'A') &&
+        (tag[2] == 'S') &&
+        (tag[3] == 'K') &&
+        (tag[4] == '4') &&
+        (tag[5] == '_') &&
+        (tag[6] == 'L') &&
+        (tag[8] == '_') &&
+        (tag[9] == 'B') &&
+        (tag[10] == 'D') &&
+        (tag[11] == '\0')) ? 1U : 0U;
+}
+
+static const char *task4_bd_turn_tag(const char *tag)
+{
+    static const char * const turn_tags[TASK4_LAP_COUNT] = {
+        "TASK4_L1_D_TURN",
+        "TASK4_L2_D_TURN",
+        "TASK4_L3_D_TURN",
+        "TASK4_L4_D_TURN"
+    };
+    uint8_t lap_index;
+
+    if ((tag[0] == 'T') &&
+        (tag[1] == 'A') &&
+        (tag[2] == 'S') &&
+        (tag[3] == 'K') &&
+        (tag[4] == '3')) {
+        return "TASK3_D_TURN";
+    }
+
+    lap_index = (uint8_t)(tag[7] - '1');
+
+    if (lap_index < TASK4_LAP_COUNT) {
+        return turn_tags[lap_index];
+    }
+
+    return "TASK4_D_TURN";
+}
+
+static const char *task4_a_turn_tag(uint8_t lap_index)
+{
+    static const char * const turn_tags[TASK4_LAP_COUNT] = {
+        "TASK4_L1_A_TURN",
+        "TASK4_L2_A_TURN",
+        "TASK4_L3_A_TURN",
+        "TASK4_L4_A_TURN"
+    };
+
+    if (lap_index < TASK4_LAP_COUNT) {
+        return turn_tags[lap_index];
+    }
+
+    return "TASK4_A_TURN";
+}
+
+static void task4_print_ac_line_debug(const char *tag,
+    uint32_t elapsed_ms,
+    int32_t distance_count,
+    const ir_tracking_sample_t *line_sample,
+    uint8_t nav_ok,
+    const jy62_navigation_t *nav)
+{
+    lc_printf("%s line_debug: ac_t=%lu ac_dist=%ld line_yaw=%ld line_gzlp=%ld line_raw=0x%02X line_mask=0x%02X line_cnt=%u line_lost=%u line_err=%ld nav=%u\r\n",
+        tag,
+        elapsed_ms,
+        distance_count,
+        (nav_ok != 0U) ? nav->yaw_relative_cdeg : 0,
+        (nav_ok != 0U) ? nav->gyro_z_filtered_mdps : 0,
+        (line_sample != 0) ? line_sample->raw : 0xFFU,
+        (line_sample != 0) ? line_sample->line_mask : 0U,
+        (line_sample != 0) ? line_sample->active_count : 0U,
+        (line_sample != 0) ? line_sample->line_lost : 1U,
+        (line_sample != 0) ? line_sample->error : 0,
+        nav_ok);
+}
 
 static uint8_t run_straight_to_line_segment(const char *tag,
     uint8_t zero_heading,
@@ -600,11 +731,57 @@ static uint8_t run_straight_to_line_segment(const char *tag,
                 g_task6_c_turn_requested = 0U;
                 task6_turn_hook_ran = 1U;
                 st011_start_pulse(TASK3_POINT_ALARM_MS);
-                (void)run_task6_c_fast_left_turn("TASK6_C_TURN",
+                (void)run_line_fast_turn("TASK6_C_TURN",
                     elapsed_ms,
                     distance_count,
                     &sample,
-                    heading_raw);
+                    heading_raw,
+                    TASK6_C_TURN_TARGET_CDEG,
+                    TASK6_C_TURN_B_PWM,
+                    TASK6_C_TURN_A_PWM,
+                    TASK3_ARC_TURN_LEFT,
+                    0U,
+                    1U,
+                    1U,
+                    1U);
+            } else if (task4_ac_debug_enabled(tag) != 0U) {
+                task4_print_ac_line_debug(tag,
+                    elapsed_ms,
+                    distance_count,
+                    &sample,
+                    nav_ok,
+                    &nav);
+                task6_turn_hook_ran = 1U;
+                st011_start_pulse(TASK3_POINT_ALARM_MS);
+                (void)run_line_fast_turn(task4_ac_turn_tag(tag),
+                    elapsed_ms,
+                    distance_count,
+                    &sample,
+                    heading_raw,
+                    TASK6_C_TURN_TARGET_CDEG,
+                    TASK6_C_TURN_B_PWM,
+                    TASK6_C_TURN_A_PWM,
+                    TASK3_ARC_TURN_LEFT,
+                    0U,
+                    1U,
+                    0U,
+                    0U);
+            } else if (task4_bd_debug_enabled(tag) != 0U) {
+                task6_turn_hook_ran = 1U;
+                st011_start_pulse(TASK3_POINT_ALARM_MS);
+                (void)run_line_fast_turn(task4_bd_turn_tag(tag),
+                    elapsed_ms,
+                    distance_count,
+                    &sample,
+                    heading_raw,
+                    TASK4_D_TURN_TARGET_CDEG,
+                    TASK4_D_TURN_B_PWM,
+                    TASK4_D_TURN_A_PWM,
+                    TASK3_ARC_TURN_RIGHT,
+                    0U,
+                    1U,
+                    0U,
+                    0U);
             }
             break;
         }
@@ -777,11 +954,19 @@ static uint8_t run_straight_to_line_segment(const char *tag,
     return stop_reason;
 }
 
-static uint8_t run_task6_c_fast_left_turn(const char *tag,
+static uint8_t run_line_fast_turn(const char *tag,
     uint32_t ac_elapsed_ms,
     int32_t ac_distance_count,
     const ir_tracking_sample_t *line_sample,
-    int32_t line_yaw_cdeg)
+    int32_t line_yaw_cdeg,
+    int32_t target_cdeg,
+    int16_t motor_b_pwm,
+    int16_t motor_a_pwm,
+    int32_t handoff_turn_dir,
+    uint8_t target_is_absolute,
+    uint8_t enable_line_stop,
+    uint8_t brake_after_turn,
+    uint8_t report_samples)
 {
     static uint32_t log_t[TASK6_C_TURN_SAMPLE_MAX];
     static int32_t log_yaw[TASK6_C_TURN_SAMPLE_MAX];
@@ -801,12 +986,18 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
     uint8_t stop_reason = 0U;
     uint8_t nav_ok;
     uint8_t ir_ok;
+    uint8_t line_stop_ready;
     int32_t start_yaw;
     int32_t yaw = 0;
     int32_t turn_cdeg = 0;
     int32_t motor_b_total = 0;
     int32_t motor_a_total = 0;
     int32_t overshoot;
+    int32_t handoff_turn;
+    int32_t handoff_b_pwm;
+    int32_t handoff_a_pwm;
+    int32_t turn_abs;
+    int32_t turn_target_cdeg;
     uint8_t index;
 
     nav_ok = JY62_PeekNavigation(&nav);
@@ -820,9 +1011,11 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
     }
 
     start_yaw = nav.yaw_relative_cdeg;
+    turn_target_cdeg = (target_is_absolute != 0U) ?
+        normalize_cdeg(target_cdeg - start_yaw) : target_cdeg;
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
-    TB6612_SetDifferential(TASK6_C_TURN_B_PWM, TASK6_C_TURN_A_PWM);
+    TB6612_SetDifferential(motor_b_pwm, motor_a_pwm);
 
     while (elapsed_ms < TASK6_C_TURN_TIMEOUT_MS) {
         delay_ms_with_st011(CONTROL_PERIOD_MS);
@@ -842,8 +1035,15 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
 
         yaw = nav.yaw_relative_cdeg;
         turn_cdeg = normalize_cdeg(yaw - start_yaw);
+        turn_abs = abs_i32(turn_cdeg);
         ir_ok = IRTracking_ReadSample(&sample);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        line_stop_ready = ((enable_line_stop != 0U) &&
+            (turn_abs >= TASK6_C_TURN_LINE_ARM_CDEG) &&
+            (ir_ok != 0U) &&
+            (sample.line_lost == 0U) &&
+            ((sample.line_mask & TASK6_C_TURN_LINE_STOP_MASK) != 0U) &&
+            (sample.active_count >= TASK6_C_TURN_LINE_STOP_MIN_COUNT)) ? 1U : 0U;
 
         if ((report_elapsed_ms >= TASK6_C_TURN_REPORT_PERIOD_MS) &&
             (sample_index < TASK6_C_TURN_SAMPLE_MAX)) {
@@ -861,8 +1061,14 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
             sample_index++;
         }
 
-        if (turn_cdeg >= TASK6_C_TURN_TARGET_CDEG) {
+        if (((turn_target_cdeg >= 0) && (turn_cdeg >= turn_target_cdeg)) ||
+            ((turn_target_cdeg < 0) && (turn_cdeg <= turn_target_cdeg))) {
             stop_reason = 1U;
+            break;
+        }
+
+        if (line_stop_ready != 0U) {
+            stop_reason = 5U;
             break;
         }
     }
@@ -871,7 +1077,6 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
         stop_reason = 2U;
     }
 
-    TB6612_Brake();
     encoder_get_total_counts(&motor_b_total, &motor_a_total);
     nav_ok = JY62_PeekNavigation(&nav);
     if (nav_ok != 0U) {
@@ -879,47 +1084,70 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
         turn_cdeg = normalize_cdeg(yaw - start_yaw);
     }
     ir_ok = IRTracking_ReadSample(&sample);
-    overshoot = turn_cdeg - TASK6_C_TURN_TARGET_CDEG;
+    overshoot = (turn_target_cdeg >= 0) ?
+        (turn_cdeg - turn_target_cdeg) : (turn_target_cdeg - turn_cdeg);
 
-    lc_printf("%s start: ac_t=%lu ac_dist=%ld line_yaw=%ld line_raw=0x%02X line_mask=0x%02X line_cnt=%u line_err=%ld target=%d pwm=%d/%d yaw0=%ld\r\n",
-        tag,
-        ac_elapsed_ms,
-        ac_distance_count,
-        line_yaw_cdeg,
-        (line_sample != 0) ? line_sample->raw : 0xFFU,
-        (line_sample != 0) ? line_sample->line_mask : 0U,
-        (line_sample != 0) ? line_sample->active_count : 0U,
-        (line_sample != 0) ? line_sample->error : 0,
-        TASK6_C_TURN_TARGET_CDEG,
-        TASK6_C_TURN_B_PWM,
-        TASK6_C_TURN_A_PWM,
-        start_yaw);
-
-    for (index = 0U; index < sample_index; index++) {
-        lc_printf("%s sample n=%u t=%lu yaw=%ld turn=%ld gzlp=%ld B=%ld A=%ld ir=0x%02X/0x%02X/%u lost=%u\r\n",
-            tag,
-            index,
-            log_t[index],
-            log_yaw[index],
-            log_turn[index],
-            log_gz[index],
-            log_b_total[index],
-            log_a_total[index],
-            log_raw[index],
-            log_mask[index],
-            log_count[index],
-            log_lost[index]);
+    if ((brake_after_turn != 0U) ||
+        ((stop_reason != 1U) && (stop_reason != 5U))) {
+        TB6612_Brake();
+    } else if (handoff_turn_dir == 0) {
+        TB6612_SetDifferential(TASK1_RAMP_B_START_PWM, TASK1_RAMP_A_START_PWM);
+    } else {
+        handoff_turn = handoff_turn_dir * TASK3_ARC_ENTRY_TURN;
+        handoff_b_pwm = clamp_i32((TASK3_ARC_B_BASE_PWM - TASK3_ARC_ENTRY_BASE_DROP) + handoff_turn,
+            TASK3_ARC_MIN_PWM,
+            TASK3_ARC_MAX_PWM);
+        handoff_a_pwm = clamp_i32((TASK3_ARC_A_BASE_PWM - TASK3_ARC_ENTRY_BASE_DROP) - handoff_turn,
+            TASK3_ARC_MIN_PWM,
+            TASK3_ARC_MAX_PWM);
+        TB6612_SetDifferential((int16_t)handoff_b_pwm, (int16_t)handoff_a_pwm);
     }
 
-    lc_printf("%s stop: reason=%s t=%lu yaw=%ld turn=%ld target=%d overshoot=%ld nav=%u B_total=%ld A_total=%ld ir=0x%02X/0x%02X/%u lost=%u err=%ld\r\n",
+    if (report_samples != 0U) {
+        lc_printf("%s start: ac_t=%lu ac_dist=%ld line_yaw=%ld line_raw=0x%02X line_mask=0x%02X line_cnt=%u line_err=%ld target=%d turn_target=%ld pwm=%d/%d yaw0=%ld\r\n",
+            tag,
+            ac_elapsed_ms,
+            ac_distance_count,
+            line_yaw_cdeg,
+            (line_sample != 0) ? line_sample->raw : 0xFFU,
+            (line_sample != 0) ? line_sample->line_mask : 0U,
+            (line_sample != 0) ? line_sample->active_count : 0U,
+            (line_sample != 0) ? line_sample->error : 0,
+            target_cdeg,
+            turn_target_cdeg,
+            motor_b_pwm,
+            motor_a_pwm,
+            start_yaw);
+
+        for (index = 0U; index < sample_index; index++) {
+            lc_printf("%s sample n=%u t=%lu yaw=%ld turn=%ld gzlp=%ld B=%ld A=%ld ir=0x%02X/0x%02X/%u lost=%u\r\n",
+                tag,
+                index,
+                log_t[index],
+                log_yaw[index],
+                log_turn[index],
+                log_gz[index],
+                log_b_total[index],
+                log_a_total[index],
+                log_raw[index],
+                log_mask[index],
+                log_count[index],
+                log_lost[index]);
+        }
+    }
+
+    lc_printf("%s stop: reason=%s t=%lu yaw=%ld turn=%ld target=%d turn_target=%ld overshoot=%ld nav=%u brake=%u B_total=%ld A_total=%ld ir=0x%02X/0x%02X/%u lost=%u err=%ld\r\n",
         tag,
-        (stop_reason == 1U) ? "target" : ((stop_reason == 2U) ? "timeout" : ((stop_reason == 3U) ? "uart_stop" : "nav_invalid")),
+        (stop_reason == 1U) ? "target" : ((stop_reason == 2U) ? "timeout" : ((stop_reason == 3U) ? "uart_stop" : ((stop_reason == 5U) ? "line" : "nav_invalid"))),
         elapsed_ms,
         yaw,
         turn_cdeg,
-        TASK6_C_TURN_TARGET_CDEG,
+        target_cdeg,
+        turn_target_cdeg,
         overshoot,
         nav_ok,
+        ((brake_after_turn != 0U) ||
+            ((stop_reason != 1U) && (stop_reason != 5U))) ? 1U : 0U,
         motor_b_total,
         motor_a_total,
         (ir_ok != 0U) ? sample.raw : 0xFFU,
@@ -929,7 +1157,7 @@ static uint8_t run_task6_c_fast_left_turn(const char *tag,
         (ir_ok != 0U) ? sample.error : 0);
 
     encoder_reset_distance_counts();
-    return (stop_reason == 1U) ? 1U : 0U;
+    return ((stop_reason == 1U) || (stop_reason == 5U)) ? 1U : 0U;
 }
 
 static uint8_t task2_arc_yaw_in_exit_window(int32_t yaw_cdeg)
@@ -1522,7 +1750,6 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
             ((sample.line_lost != 0U) || (wide_line != 0U))) ? 1U : 0U;
         if ((stop_on_final_line == 0U) &&
             (distance_exit_ready != 0U) &&
-            (yaw_exit_ready != 0U) &&
             (b_exit_heading_ready != 0U) &&
             (exit_line_seen != 0U)) {
             b_exit_heading_latched = 1U;
@@ -1765,8 +1992,6 @@ static void run_task3_acbda(void)
         return;
     }
     /* D 点：BD 直线扫到入线后触发。 */
-    st011_start_pulse(TASK3_POINT_ALARM_MS);
-
     reason = run_task3_arc_line_follow_segment("TASK3_DA",
         TASK3_ARC_TURN_RIGHT,
         1U,
@@ -1819,6 +2044,35 @@ static uint8_t run_task4_lap(uint8_t lap_index,
         zero_ac_heading,
         final_lap);
 
+    if (zero_ac_heading == 0U) {
+        lc_printf("%s preturn: lap=%u rel_turn=%d target=%ld pwm=%d/%d\r\n",
+            tag_ac,
+            (uint8_t)(lap_index + 1U),
+            TASK4_AC_RELATIVE_TURN_CDEG,
+            ac_heading_target,
+            TASK4_A_TURN_B_PWM,
+            TASK4_A_TURN_A_PWM);
+        reason = run_line_fast_turn(task4_a_turn_tag(lap_index),
+            0U,
+            0,
+            0,
+            ac_heading_target,
+            ac_heading_target,
+            TASK4_A_TURN_B_PWM,
+            TASK4_A_TURN_A_PWM,
+            0,
+            1U,
+            0U,
+            0U,
+            0U);
+        if (reason == 0U) {
+            lc_printf("TASK4 abort before %s: lap=%u A preturn failed\r\n",
+                tag_ac,
+                (uint8_t)(lap_index + 1U));
+            return 0U;
+        }
+    }
+
     reason = run_straight_to_line_segment(tag_ac,
         zero_ac_heading,
         ac_heading_target,
@@ -1834,7 +2088,6 @@ static uint8_t run_task4_lap(uint8_t lap_index,
             reason);
         return 0U;
     }
-    st011_start_pulse(TASK3_POINT_ALARM_MS);
 
     reason = run_task3_arc_line_follow_segment(tag_cb,
         TASK3_ARC_TURN_LEFT,
@@ -1879,7 +2132,6 @@ static uint8_t run_task4_lap(uint8_t lap_index,
             reason);
         return 0U;
     }
-    st011_start_pulse(TASK3_POINT_ALARM_MS);
 
     reason = run_task3_arc_line_follow_segment(tag_da,
         TASK3_ARC_TURN_RIGHT,

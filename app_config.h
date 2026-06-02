@@ -195,17 +195,17 @@
 #define TASK3_STRAIGHT_STOP_MASK      (0x7EU)
 #define TASK3_STRAIGHT_STOP_MIN_IR_COUNT (1)
 #define TASK3_STRAIGHT_CORR_MAX       (125)
-#define TASK3_BD_HEADING_CORR_DIVISOR (8)
-#define TASK3_BD_HEADING_CORR_MAX     (105)
-#define TASK3_STRAIGHT_LINE_ARM_COUNT (6500)
-#define TASK3_STRAIGHT_SEARCH_START_COUNT (6500)
-#define TASK3_STRAIGHT_SEARCH_SWEEP_START_COUNT (7200)
+#define TASK3_BD_HEADING_CORR_DIVISOR (5)
+#define TASK3_BD_HEADING_CORR_MAX     (170)
+#define TASK3_STRAIGHT_LINE_ARM_COUNT (6100)
+#define TASK3_STRAIGHT_SEARCH_START_COUNT (6100)
+#define TASK3_STRAIGHT_SEARCH_SWEEP_START_COUNT (6800)
 #define TASK3_STRAIGHT_SEARCH_SWEEP_PERIOD_MS (90)
 #define TASK3_STRAIGHT_SEARCH_CORR_DIVISOR (38)
 #define TASK3_STRAIGHT_SEARCH_CORR_MAX     (120)
 #define TASK3_STRAIGHT_SEARCH_SOFT_CORR    (65)
 #define TASK3_STRAIGHT_SEARCH_SWEEP_CORR   (120)
-#define TASK3_STRAIGHT_SEARCH_BASE_DROP    (60)
+#define TASK3_STRAIGHT_SEARCH_BASE_DROP    (95)
 #define TASK3_ALIGN_TOL_CDEG          (180)
 #define TASK3_ALIGN_STABLE_COUNT      (4)
 #define TASK3_ALIGN_TIMEOUT_MS        (4500)
@@ -236,10 +236,13 @@
 #define TASK3_ARC_MAX_RUN_MS          (12000)
 #define TASK3_ARC_REPORT_PERIOD_MS    (100)
 
-/* 任务四：按任务三路线连续跑 4 圈。A 点换圈转角与 B 点等大反向。 */
+/* Task4: run the Task3 route for 4 laps. */
 #define TASK4_LAP_COUNT               (4)
-#define TASK4_AC_RELATIVE_TURN_CDEG   (-TASK3_BD_RELATIVE_TURN_CDEG)
+/* Task4 A->next AC keeps the Task1/Task3 zero heading; BAC is about 38.6 deg. */
+#define TASK4_AC_RELATIVE_TURN_CDEG   (-TASK3_BAC_THEORY_CDEG)
 #define TASK4_AC_LINE_SEARCH_PROTECT  (3)
+#define TASK4_A_TURN_B_PWM            TASK4_D_TURN_B_PWM
+#define TASK4_A_TURN_A_PWM            TASK4_D_TURN_A_PWM
 
 /* 06 debug: run task3 AC, then make an immediate fast left turn at C and stop. */
 #define TASK6_C_TURN_TARGET_CDEG      (2200)
@@ -248,6 +251,14 @@
 #define TASK6_C_TURN_TIMEOUT_MS       (1200)
 #define TASK6_C_TURN_REPORT_PERIOD_MS (40)
 #define TASK6_C_TURN_SAMPLE_MAX       (64)
+#define TASK6_C_TURN_LINE_ARM_CDEG    (1200)
+#define TASK6_C_TURN_LINE_STOP_MASK   (0x7EU)
+#define TASK6_C_TURN_LINE_STOP_MIN_COUNT (1)
+
+/* Task4 debug turn after BD line: immediate right turn into DA. */
+#define TASK4_D_TURN_TARGET_CDEG      (-2200)
+#define TASK4_D_TURN_B_PWM            (760)
+#define TASK4_D_TURN_A_PWM            (-220)
 
 /* 编码器方向符号：统一让前进方向计数为正。 */
 #define ENCODER_MOTOR_A_FORWARD_SIGN (-1)
