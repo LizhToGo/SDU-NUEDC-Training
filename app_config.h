@@ -5,10 +5,10 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 当前接线：左轮是 B 电机，右轮是 A 电机。 */
-#define STRAIGHT_B_BASE_PWM (548)
-#define STRAIGHT_A_BASE_PWM (560)
+#define STRAIGHT_B_BASE_PWM (825)
+#define STRAIGHT_A_BASE_PWM (832)
 #define STRAIGHT_MIN_PWM    (0)
-#define STRAIGHT_MAX_PWM    (650)
+#define STRAIGHT_MAX_PWM    (870)
 
 #define PID_REPORT_PERIOD_MS (100)
 
@@ -45,8 +45,8 @@
 #define TASK1_START_SETTLE_MS   (250)
 #define TASK1_AFTER_ZERO_DELAY_MS (100)
 #define TASK1_START_RAMP_MS       (400)
-#define TASK1_RAMP_B_START_PWM    (515)
-#define TASK1_RAMP_A_START_PWM    (555)
+#define TASK1_RAMP_B_START_PWM    (560)
+#define TASK1_RAMP_A_START_PWM    (600)
 #define TASK1_REPORT_PERIOD_MS    (100)
 #define TASK1_MAX_RUN_MS          (15000)
 #define TASK1_B_LINE_ARM_COUNT    (6000)
@@ -240,6 +240,14 @@
 #define TASK4_LAP_COUNT               (4)
 #define TASK4_AC_RELATIVE_TURN_CDEG   (-TASK3_BD_RELATIVE_TURN_CDEG)
 #define TASK4_AC_LINE_SEARCH_PROTECT  (3)
+
+/* 06 debug: run task3 AC, then make an immediate fast left turn at C and stop. */
+#define TASK6_C_TURN_TARGET_CDEG      (2200)
+#define TASK6_C_TURN_B_PWM            (-220)
+#define TASK6_C_TURN_A_PWM            (760)
+#define TASK6_C_TURN_TIMEOUT_MS       (1200)
+#define TASK6_C_TURN_REPORT_PERIOD_MS (40)
+#define TASK6_C_TURN_SAMPLE_MAX       (64)
 
 /* 编码器方向符号：统一让前进方向计数为正。 */
 #define ENCODER_MOTOR_A_FORWARD_SIGN (-1)

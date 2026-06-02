@@ -22,6 +22,7 @@
 
 static uint8_t g_jy62_zero_ready;
 static uint32_t g_st011_pulse_remaining_ms;
+static uint8_t g_task6_c_turn_requested;
 
 static void st011_set_active(uint8_t active)
 {
@@ -106,6 +107,7 @@ typedef enum {
     TASK_ID_3 = 3,
     TASK_ID_4 = 4,
     TASK_ID_5 = 5,
+    TASK_ID_6 = 6,
     TASK_ID_STOP = 255
 } task_id_t;
 
@@ -146,6 +148,11 @@ static task_id_t task_uart_read_command(void)
             return TASK_ID_5;
         }
 
+        if ((ch == '6') || (ch == 0x06U)) {
+            seen_zero = 0U;
+            return TASK_ID_6;
+        }
+
         if (seen_zero != 0U) {
             seen_zero = 0U;
             if (ch == '1') {
@@ -162,6 +169,9 @@ static task_id_t task_uart_read_command(void)
             }
             if (ch == '5') {
                 return TASK_ID_5;
+            }
+            if (ch == '6') {
+                return TASK_ID_6;
             }
             if (ch == '0') {
                 return TASK_ID_STOP;
@@ -320,6 +330,12 @@ static int32_t task2_straight_search_direction(uint8_t fast_correction,
     return 1;
 }
 
+static uint8_t run_task6_c_fast_left_turn(const char *tag,
+    uint32_t ac_elapsed_ms,
+    int32_t ac_distance_count,
+    const ir_tracking_sample_t *line_sample,
+    int32_t line_yaw_cdeg);
+
 static uint8_t run_straight_to_line_segment(const char *tag,
     uint8_t zero_heading,
     int32_t heading_target_cdeg,
@@ -349,6 +365,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
     int32_t start_search_start_count;
     int32_t start_search_sweep_start_count;
     int32_t start_search_sweep_period_ms;
+    uint8_t task6_turn_hook_ran = 0U;
 
     if (start_alarm_ms != 0U) {
         TB6612_Brake();
@@ -579,6 +596,16 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             (sample.active_count >= TASK1_STOP_MIN_IR_COUNT) &&
             ((line_search_protect == 0U) || (line_stop_ready != 0U))) {
             stop_reason = 1U;
+            if (g_task6_c_turn_requested != 0U) {
+                g_task6_c_turn_requested = 0U;
+                task6_turn_hook_ran = 1U;
+                st011_start_pulse(TASK3_POINT_ALARM_MS);
+                (void)run_task6_c_fast_left_turn("TASK6_C_TURN",
+                    elapsed_ms,
+                    distance_count,
+                    &sample,
+                    heading_raw);
+            }
             break;
         }
 
@@ -719,33 +746,190 @@ static uint8_t run_straight_to_line_segment(const char *tag,
         }
     }
 
-    if ((stop_alarm_ms != 0U) || (stop_reason != 1U)) {
-        TB6612_Brake();
+    if (task6_turn_hook_ran == 0U) {
+        if ((stop_alarm_ms != 0U) || (stop_reason != 1U)) {
+            TB6612_Brake();
+        }
+        encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
+        encoder_get_total_counts(&motor_b_delta, &motor_a_delta);
+        stop_nav_ok = JY62_PeekNavigation(&nav);
+        lc_printf("%s stop: reason=%s t=%lu dist=%ld arm=%d force=%d raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u rel_cdeg=%ld B_total=%ld A_total=%ld\r\n",
+            tag,
+            (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "uart_stop" : "timeout")),
+            elapsed_ms,
+            (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
+            (line_search_protect >= 2U) ? TASK3_STRAIGHT_LINE_ARM_COUNT : TASK1_B_LINE_ARM_COUNT,
+            TASK1_FORCE_STOP_COUNT,
+            (ir_ok != 0U) ? sample.raw : 0xFFU,
+            (ir_ok != 0U) ? sample.line_mask : 0U,
+            (ir_ok != 0U) ? sample.active_count : 0U,
+            (ir_ok != 0U) ? sample.line_lost : 1U,
+            ir_ok,
+            stop_nav_ok,
+            nav.yaw_relative_cdeg,
+            motor_b_delta,
+            motor_a_delta);
+        if (stop_alarm_ms != 0U) {
+            st011_pulse(stop_alarm_ms);
+        }
     }
-    encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
-    encoder_get_total_counts(&motor_b_delta, &motor_a_delta);
-    stop_nav_ok = JY62_PeekNavigation(&nav);
-    lc_printf("%s stop: reason=%s t=%lu dist=%ld arm=%d force=%d raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u rel_cdeg=%ld B_total=%ld A_total=%ld\r\n",
+
+    return stop_reason;
+}
+
+static uint8_t run_task6_c_fast_left_turn(const char *tag,
+    uint32_t ac_elapsed_ms,
+    int32_t ac_distance_count,
+    const ir_tracking_sample_t *line_sample,
+    int32_t line_yaw_cdeg)
+{
+    static uint32_t log_t[TASK6_C_TURN_SAMPLE_MAX];
+    static int32_t log_yaw[TASK6_C_TURN_SAMPLE_MAX];
+    static int32_t log_turn[TASK6_C_TURN_SAMPLE_MAX];
+    static int32_t log_gz[TASK6_C_TURN_SAMPLE_MAX];
+    static int32_t log_b_total[TASK6_C_TURN_SAMPLE_MAX];
+    static int32_t log_a_total[TASK6_C_TURN_SAMPLE_MAX];
+    static uint8_t log_raw[TASK6_C_TURN_SAMPLE_MAX];
+    static uint8_t log_mask[TASK6_C_TURN_SAMPLE_MAX];
+    static uint8_t log_count[TASK6_C_TURN_SAMPLE_MAX];
+    static uint8_t log_lost[TASK6_C_TURN_SAMPLE_MAX];
+    jy62_navigation_t nav = {0};
+    ir_tracking_sample_t sample = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    uint8_t sample_index = 0U;
+    uint8_t stop_reason = 0U;
+    uint8_t nav_ok;
+    uint8_t ir_ok;
+    int32_t start_yaw;
+    int32_t yaw = 0;
+    int32_t turn_cdeg = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t overshoot;
+    uint8_t index;
+
+    nav_ok = JY62_PeekNavigation(&nav);
+    if (nav_ok == 0U) {
+        TB6612_Brake();
+        lc_printf("%s abort: nav invalid before turn ac_t=%lu ac_dist=%ld\r\n",
+            tag,
+            ac_elapsed_ms,
+            ac_distance_count);
+        return 0U;
+    }
+
+    start_yaw = nav.yaw_relative_cdeg;
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    TB6612_SetDifferential(TASK6_C_TURN_B_PWM, TASK6_C_TURN_A_PWM);
+
+    while (elapsed_ms < TASK6_C_TURN_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        nav_ok = JY62_PeekNavigation(&nav);
+        if (nav_ok == 0U) {
+            stop_reason = 4U;
+            break;
+        }
+
+        yaw = nav.yaw_relative_cdeg;
+        turn_cdeg = normalize_cdeg(yaw - start_yaw);
+        ir_ok = IRTracking_ReadSample(&sample);
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+
+        if ((report_elapsed_ms >= TASK6_C_TURN_REPORT_PERIOD_MS) &&
+            (sample_index < TASK6_C_TURN_SAMPLE_MAX)) {
+            report_elapsed_ms = 0;
+            log_t[sample_index] = elapsed_ms;
+            log_yaw[sample_index] = yaw;
+            log_turn[sample_index] = turn_cdeg;
+            log_gz[sample_index] = nav.gyro_z_filtered_mdps;
+            log_b_total[sample_index] = motor_b_total;
+            log_a_total[sample_index] = motor_a_total;
+            log_raw[sample_index] = (ir_ok != 0U) ? sample.raw : 0xFFU;
+            log_mask[sample_index] = (ir_ok != 0U) ? sample.line_mask : 0U;
+            log_count[sample_index] = (ir_ok != 0U) ? sample.active_count : 0U;
+            log_lost[sample_index] = (ir_ok != 0U) ? sample.line_lost : 1U;
+            sample_index++;
+        }
+
+        if (turn_cdeg >= TASK6_C_TURN_TARGET_CDEG) {
+            stop_reason = 1U;
+            break;
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    TB6612_Brake();
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    nav_ok = JY62_PeekNavigation(&nav);
+    if (nav_ok != 0U) {
+        yaw = nav.yaw_relative_cdeg;
+        turn_cdeg = normalize_cdeg(yaw - start_yaw);
+    }
+    ir_ok = IRTracking_ReadSample(&sample);
+    overshoot = turn_cdeg - TASK6_C_TURN_TARGET_CDEG;
+
+    lc_printf("%s start: ac_t=%lu ac_dist=%ld line_yaw=%ld line_raw=0x%02X line_mask=0x%02X line_cnt=%u line_err=%ld target=%d pwm=%d/%d yaw0=%ld\r\n",
         tag,
-        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "force" : ((stop_reason == 3U) ? "uart_stop" : "timeout")),
+        ac_elapsed_ms,
+        ac_distance_count,
+        line_yaw_cdeg,
+        (line_sample != 0) ? line_sample->raw : 0xFFU,
+        (line_sample != 0) ? line_sample->line_mask : 0U,
+        (line_sample != 0) ? line_sample->active_count : 0U,
+        (line_sample != 0) ? line_sample->error : 0,
+        TASK6_C_TURN_TARGET_CDEG,
+        TASK6_C_TURN_B_PWM,
+        TASK6_C_TURN_A_PWM,
+        start_yaw);
+
+    for (index = 0U; index < sample_index; index++) {
+        lc_printf("%s sample n=%u t=%lu yaw=%ld turn=%ld gzlp=%ld B=%ld A=%ld ir=0x%02X/0x%02X/%u lost=%u\r\n",
+            tag,
+            index,
+            log_t[index],
+            log_yaw[index],
+            log_turn[index],
+            log_gz[index],
+            log_b_total[index],
+            log_a_total[index],
+            log_raw[index],
+            log_mask[index],
+            log_count[index],
+            log_lost[index]);
+    }
+
+    lc_printf("%s stop: reason=%s t=%lu yaw=%ld turn=%ld target=%d overshoot=%ld nav=%u B_total=%ld A_total=%ld ir=0x%02X/0x%02X/%u lost=%u err=%ld\r\n",
+        tag,
+        (stop_reason == 1U) ? "target" : ((stop_reason == 2U) ? "timeout" : ((stop_reason == 3U) ? "uart_stop" : "nav_invalid")),
         elapsed_ms,
-        (abs_i32(motor_b_delta) + abs_i32(motor_a_delta)) / 2,
-        (line_search_protect >= 2U) ? TASK3_STRAIGHT_LINE_ARM_COUNT : TASK1_B_LINE_ARM_COUNT,
-        TASK1_FORCE_STOP_COUNT,
+        yaw,
+        turn_cdeg,
+        TASK6_C_TURN_TARGET_CDEG,
+        overshoot,
+        nav_ok,
+        motor_b_total,
+        motor_a_total,
         (ir_ok != 0U) ? sample.raw : 0xFFU,
         (ir_ok != 0U) ? sample.line_mask : 0U,
         (ir_ok != 0U) ? sample.active_count : 0U,
         (ir_ok != 0U) ? sample.line_lost : 1U,
-        ir_ok,
-        stop_nav_ok,
-        nav.yaw_relative_cdeg,
-        motor_b_delta,
-        motor_a_delta);
-    if (stop_alarm_ms != 0U) {
-        st011_pulse(stop_alarm_ms);
-    }
+        (ir_ok != 0U) ? sample.error : 0);
 
-    return stop_reason;
+    encoder_reset_distance_counts();
+    return (stop_reason == 1U) ? 1U : 0U;
 }
 
 static uint8_t task2_arc_yaw_in_exit_window(int32_t yaw_cdeg)
@@ -1765,13 +1949,45 @@ static void run_task4_four_laps(void)
     lc_printf("TASK4 complete: %d laps stopped at A, distance reset\r\n", TASK4_LAP_COUNT);
 }
 
+static void run_task6_ac_c_turn_test(void)
+{
+    uint8_t reason;
+
+    lc_printf("TASK6 start: UART 06, run task3 AC only, then fast left turn at C target=%d pwm=%d/%d\r\n",
+        TASK6_C_TURN_TARGET_CDEG,
+        TASK6_C_TURN_B_PWM,
+        TASK6_C_TURN_A_PWM);
+
+    g_task6_c_turn_requested = 1U;
+    reason = run_straight_to_line_segment("TASK6_AC",
+        1U,
+        0,
+        0U,
+        0U,
+        2U,
+        TASK1_START_ALARM_MS,
+        0U);
+    g_task6_c_turn_requested = 0U;
+
+    if (reason != 1U) {
+        TB6612_Brake();
+        encoder_reset_distance_counts();
+        lc_printf("TASK6 abort after AC: stop_reason=%u\r\n", reason);
+        return;
+    }
+
+    TB6612_Brake();
+    encoder_reset_distance_counts();
+    lc_printf("TASK6 complete: AC line detected, C fast turn test finished\r\n");
+}
+
 static void run_task_dispatcher(void)
 {
     task_id_t task_id;
 
     st011_set_active(0U);
     TB6612_Brake();
-    lc_printf("TASK ready: A26/UART0 01=task1, A24/UART0 02=task2, B24/UART0 03=task3, A22/UART0 04=task4, UART0 05=PWM test, UART0 00=stop\r\n");
+    lc_printf("TASK ready: A26/UART0 01=task1, A24/UART0 02=task2, B24/UART0 03=task3, A22/UART0 04=task4, UART0 05=PWM test, UART0 06=C turn test, UART0 00=stop\r\n");
 
     while (1) {
         task_id = wait_task_uart_command();
@@ -1800,6 +2016,9 @@ static void run_task_dispatcher(void)
         } else if (task_id == TASK_ID_5) {
             TB6612_Brake();
             run_motor_pid_stream();
+        } else if (task_id == TASK_ID_6) {
+            TB6612_Brake();
+            run_task6_ac_c_turn_test();
         } else {
             TB6612_Brake();
             st011_pulse(TASK1_START_ALARM_MS);
