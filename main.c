@@ -108,6 +108,7 @@ typedef enum {
     TASK_ID_4 = 4,
     TASK_ID_5 = 5,
     TASK_ID_6 = 6,
+    TASK_ID_7 = 7,
     TASK_ID_STOP = 255
 } task_id_t;
 
@@ -153,6 +154,11 @@ static task_id_t task_uart_read_command(void)
             return TASK_ID_6;
         }
 
+        if ((ch == '7') || (ch == 0x07U)) {
+            seen_zero = 0U;
+            return TASK_ID_7;
+        }
+
         if (seen_zero != 0U) {
             seen_zero = 0U;
             if (ch == '1') {
@@ -172,6 +178,9 @@ static task_id_t task_uart_read_command(void)
             }
             if (ch == '6') {
                 return TASK_ID_6;
+            }
+            if (ch == '7') {
+                return TASK_ID_7;
             }
             if (ch == '0') {
                 return TASK_ID_STOP;
@@ -781,7 +790,7 @@ static uint8_t run_straight_to_line_segment(const char *tag,
                     TASK4_D_TURN_A_PWM,
                     TASK3_ARC_TURN_RIGHT,
                     0U,
-                    1U,
+                    0U,
                     0U,
                     0U);
             }
@@ -835,14 +844,19 @@ static uint8_t run_straight_to_line_segment(const char *tag,
             elapsed_ms, TASK1_START_RAMP_MS);
         base_a_pwm = ramp_i32(TASK1_RAMP_A_START_PWM, STRAIGHT_A_BASE_PWM,
             elapsed_ms, TASK1_START_RAMP_MS);
+        if ((fast_correction == 0U) &&
+            (heading_only == 0U) &&
+            (line_search_protect == 0U) &&
+            (distance_count >= TASK1_APPROACH_SLOW_COUNT)) {
+            base_b_pwm = TASK1_APPROACH_B_BASE_PWM;
+            base_a_pwm = TASK1_APPROACH_A_BASE_PWM;
+        }
         search_correction = 0;
         if (search_mode != 0U) {
             base_b_pwm -= search_base_drop;
             base_a_pwm -= search_base_drop;
             if (line_search_protect >= 2U) {
-                search_direction =
-                    (((elapsed_ms / TASK3_STRAIGHT_SEARCH_SWEEP_PERIOD_MS) & 0x01U) == 0U) ?
-                    1 : -1;
+                search_direction = 0;
             } else {
                 search_direction = task2_straight_search_direction(fast_correction,
                     heading_target_cdeg);
@@ -851,12 +865,13 @@ static uint8_t run_straight_to_line_segment(const char *tag,
                 search_correction = clamp_i32(-(sample.error / search_corr_divisor),
                     -search_corr_max,
                     search_corr_max);
-                if (search_correction == 0) {
+                if ((search_correction == 0) && (search_direction != 0)) {
                     search_correction = search_direction * search_soft_corr;
                 }
-            } else if (distance_count >= search_sweep_start_count) {
+            } else if ((line_search_protect < 2U) &&
+                (distance_count >= search_sweep_start_count)) {
                 search_correction = search_direction * search_sweep_corr;
-            } else {
+            } else if (line_search_protect < 2U) {
                 search_correction = search_direction * search_soft_corr;
             }
             correction = clamp_i32(correction + search_correction,
@@ -1647,7 +1662,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
     int32_t filtered_error = 0;
     int32_t last_filtered_error = 0;
     int32_t last_turn = 0;
-    int32_t last_yaw_rel = 0;
+    int32_t arc_start_yaw = 0;
     int32_t yaw_progress = 0;
     uint8_t stop_reason = 0U;
     uint8_t line_seen = 0U;
@@ -1662,7 +1677,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
     nav_ok = JY62_PeekNavigation(&nav);
-    last_yaw_rel = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
+    arc_start_yaw = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
 
     lc_printf("%s start: task3 IR arc dir=%ld base=%d/%d finish=%ld exit_ignore=%ld yaw_done=%d final_arm=%d entry=%d/%d final_line=%u\r\n",
         tag,
@@ -1692,6 +1707,10 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         int32_t yaw_rel;
         int32_t yaw_delta;
         int32_t yaw_step;
+        int32_t previous_yaw_progress;
+        int32_t theta_ref;
+        int32_t yaw_lag;
+        int32_t yaw_correction;
         uint8_t line_valid;
         uint8_t wide_line;
         uint8_t final_line;
@@ -1721,16 +1740,23 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
         nav_ok = JY62_PeekNavigation(&nav);
         yaw_rel = (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0;
         if (nav_ok != 0U) {
-            yaw_delta = normalize_cdeg(yaw_rel - last_yaw_rel);
-            yaw_step = yaw_delta * -turn_dir;
-            if (yaw_step > 0) {
-                yaw_progress += yaw_step;
+            previous_yaw_progress = yaw_progress;
+            yaw_delta = normalize_cdeg(yaw_rel - arc_start_yaw);
+            yaw_progress = abs_i32(yaw_delta);
+            yaw_step = yaw_progress - previous_yaw_progress;
+            if (yaw_step < 0) {
+                yaw_step = 0;
             }
-            last_yaw_rel = yaw_rel;
         } else {
             yaw_delta = 0;
             yaw_step = 0;
         }
+        theta_ref = (int32_t)(((int64_t)distance_count * 18000LL) /
+            (int64_t)TASK3_ARC_LENGTH_COUNT);
+        theta_ref = clamp_i32(theta_ref, 0, 18000);
+        yaw_lag = (nav_ok != 0U) ? (theta_ref - yaw_progress) : 0;
+        yaw_correction = clamp_i32((yaw_lag * turn_dir) / TASK3_ARC_YAW_CORR_DIVISOR,
+            -TASK3_ARC_YAW_CORR_MAX, TASK3_ARC_YAW_CORR_MAX);
 
         ir_ok = IRTracking_ReadSample(&sample);
         wide_line = ((ir_ok != 0U) &&
@@ -1820,7 +1846,7 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
                 if ((((turn_dir < 0) && (raw_error <= -TASK3_ARC_ENTRY_EDGE_ERROR)) ||
                      ((turn_dir > 0) && (raw_error >= TASK3_ARC_ENTRY_EDGE_ERROR)))) {
                     entry_edge_recover = 1U;
-                    turn = -turn_dir * TASK3_ARC_ENTRY_EDGE_RECOVER_TURN;
+                    turn = turn_dir * TASK3_ARC_ENTRY_EDGE_RECOVER_TURN;
                 }
             } else {
                 turn = (filtered_error / TASK3_ARC_KP_DIVISOR) +
@@ -1864,6 +1890,9 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
                     -TASK3_ARC_ENTRY_TURN_MAX, TASK3_ARC_ENTRY_TURN_MAX);
             }
         }
+        turn = clamp_i32(turn + yaw_correction,
+            (entry_zone != 0U) ? -TASK3_ARC_ENTRY_TURN_MAX : -TASK3_ARC_TURN_MAX,
+            (entry_zone != 0U) ? TASK3_ARC_ENTRY_TURN_MAX : TASK3_ARC_TURN_MAX);
         if (line_valid != 0U) {
             last_turn = turn;
         }
@@ -1881,13 +1910,16 @@ static uint8_t run_task3_arc_line_follow_segment(const char *tag,
 
         if (report_elapsed_ms >= TASK3_ARC_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu dist=%ld yaw=%ld ystep=%ld yprog=%ld nav=%u ir=%u valid=%u wide=%u final=%u yrdy=%u drdy=%u frdy=%u brdy=%u bmark=%u xcnt=%u seen=%u xseen=%u lost_cnt=%u entry=%u mode=%u raw=0x%02X mask=0x%02X cnt=%u err=%ld filt=%ld der=%ld turn=%ld L=%ld R=%ld\r\n",
+            lc_printf("%s t=%lu dist=%ld yaw=%ld ystep=%ld yprog=%ld theta=%ld ylag=%ld ycorr=%ld nav=%u ir=%u valid=%u wide=%u final=%u yrdy=%u drdy=%u frdy=%u brdy=%u bmark=%u xcnt=%u seen=%u xseen=%u lost_cnt=%u entry=%u mode=%u raw=0x%02X mask=0x%02X cnt=%u err=%ld filt=%ld der=%ld turn=%ld L=%ld R=%ld\r\n",
                 tag,
                 elapsed_ms,
                 distance_count,
                 yaw_rel,
                 yaw_step,
                 yaw_progress,
+                theta_ref,
+                yaw_lag,
+                yaw_correction,
                 nav_ok,
                 ir_ok,
                 line_valid,
@@ -1983,7 +2015,6 @@ static void run_task3_acbda(void)
     }
     /* B 点：CB 弧线确认出线后触发声光，不刹车，直接进入 BD 边走边转。 */
     st011_start_pulse(TASK3_POINT_ALARM_MS);
-
     nav_ok = JY62_PeekNavigation(&nav);
     if (nav_ok == 0U) {
         TB6612_Brake();
@@ -2225,7 +2256,7 @@ static void run_task_dispatcher(void)
 
     st011_set_active(0U);
     TB6612_Brake();
-    lc_printf("TASK ready: A26/UART0 01=task1, A24/UART0 02=task2, B24/UART0 03=task3, A22/UART0 04=task4, UART0 05=PWM test, UART0 06=C turn test, UART0 00=stop\r\n");
+    lc_printf("TASK ready: A26/UART0 01=task1, A24/UART0 02=task2, B24/UART0 03=task3, A22/UART0 04=task4, UART0 05=PID test, UART0 06=C turn test, UART0 07=PD test, UART0 00=stop\r\n");
 
     while (1) {
         task_id = wait_task_uart_command();
@@ -2257,6 +2288,9 @@ static void run_task_dispatcher(void)
         } else if (task_id == TASK_ID_6) {
             TB6612_Brake();
             run_task6_ac_c_turn_test();
+        } else if (task_id == TASK_ID_7) {
+            TB6612_Brake();
+            run_motor_pd_stream();
         } else {
             TB6612_Brake();
             st011_pulse(TASK1_START_ALARM_MS);

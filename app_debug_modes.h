@@ -5,6 +5,7 @@
 
 #include "app_config.h"
 #include "app_control.h"
+#include "app_straight.h"
 #include "board.h"
 #include "bsp_encoder.h"
 #include "bsp_ir_tracking.h"
@@ -35,6 +36,8 @@ static inline uint8_t debug_uart_stop_requested(void)
 static inline void run_motor_pid_stream(void)
 {
     straight_pid_t pid;
+    straight_drive_config_t drive_config;
+    straight_drive_output_t drive;
     uint32_t elapsed_ms = 0;
     uint32_t report_elapsed_ms = 0;
     int32_t report_b_speed_sum = 0;
@@ -45,47 +48,33 @@ static inline void run_motor_pid_stream(void)
     int32_t motor_b_total;
     int32_t motor_a_total;
     int32_t distance_count;
-    int32_t feedforward_correction =
-        -((int32_t)PID_TEST_TARGET_SPEED_DIFF * (int32_t)PID_TEST_DIFF_FF_GAIN);
+    int32_t feedforward_correction;
 
+    straight_drive_config_pid_test(&drive_config);
     straight_pid_reset(&pid);
     straight_pid_set_limits(&pid, PID_TEST_I_LIMIT, PID_TEST_CORR_MAX);
-    feedforward_correction = clamp_i32(feedforward_correction,
-        -PID_TEST_CORR_MAX, PID_TEST_CORR_MAX);
+    feedforward_correction = straight_drive_feedforward(&drive_config);
 
     /* 每次进入 05 模式都从 0 开始累计，方便标定 COUNTS_PER_CM。 */
     encoder_reset_distance_counts();
     lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld d_div=%d d_max=%d i_limit=%d corr_max=%d period=%dms report=%dms\r\n",
-        STRAIGHT_B_BASE_PWM,
-        STRAIGHT_A_BASE_PWM,
-        PID_TEST_TARGET_SPEED_DIFF,
-        PID_TEST_DIFF_FF_GAIN,
+        drive_config.base_b_pwm,
+        drive_config.base_a_pwm,
+        drive_config.target_speed_diff,
+        drive_config.diff_ff_gain,
         feedforward_correction,
-        PID_TEST_DISTANCE_CORR_DIVISOR,
-        PID_TEST_DISTANCE_CORR_MAX,
+        drive_config.distance_corr_divisor,
+        drive_config.distance_corr_max,
         PID_TEST_I_LIMIT,
-        PID_TEST_CORR_MAX,
+        drive_config.correction_max,
         CONTROL_PERIOD_MS,
         PID_REPORT_PERIOD_MS);
     encoder_enable_interrupts();
     lc_printf("PID encoder IRQ enabled, B=PA14/PA15 A=PA16/PA17\r\n");
-    TB6612_SetDifferential(STRAIGHT_B_BASE_PWM, STRAIGHT_A_BASE_PWM);
+    TB6612_SetDifferential((int16_t)drive_config.base_b_pwm,
+        (int16_t)drive_config.base_a_pwm);
 
     while (1) {
-        int32_t motor_b_speed;
-        int32_t motor_a_speed;
-        int32_t speed_diff;
-        int32_t error;
-        int32_t p_term;
-        int32_t i_term;
-        int32_t d_term;
-        int32_t feedback_correction;
-        int32_t distance_error;
-        int32_t distance_correction;
-        int32_t correction;
-        int32_t motor_b_pwm;
-        int32_t motor_a_pwm;
-
         delay_ms(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
         report_elapsed_ms += CONTROL_PERIOD_MS;
@@ -105,41 +94,26 @@ static inline void run_motor_pid_stream(void)
         /* 用 20 ms 时间窗口内的编码器增量作为简化速度估计。 */
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
-        motor_b_speed = abs_i32(motor_b_delta);
-        motor_a_speed = abs_i32(motor_a_delta);
-        distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
-        speed_diff = motor_b_speed - motor_a_speed;
-        report_b_speed_sum += motor_b_speed;
-        report_a_speed_sum += motor_a_speed;
+        straight_drive_update(&pid,
+            &drive_config,
+            motor_b_delta,
+            motor_a_delta,
+            motor_b_total,
+            motor_a_total,
+            &drive);
+        report_b_speed_sum += drive.motor_b_speed;
+        report_a_speed_sum += drive.motor_a_speed;
         report_sample_count++;
 
-        feedback_correction = straight_pid_update(&pid,
-            motor_b_speed, motor_a_speed,
-            PID_TEST_TARGET_SPEED_DIFF,
-            &error, &p_term, &i_term, &d_term);
-        distance_error = motor_b_total - motor_a_total;
-        distance_correction = clamp_i32(distance_error / PID_TEST_DISTANCE_CORR_DIVISOR,
-            -PID_TEST_DISTANCE_CORR_MAX, PID_TEST_DISTANCE_CORR_MAX);
-        correction = clamp_i32(feedforward_correction + feedback_correction + distance_correction,
-            -PID_TEST_CORR_MAX, PID_TEST_CORR_MAX);
-
-        /*
-         * correction 为正时，说明 B 轮偏快，所以 B_pwm 减小、A_pwm 增大；
-         * correction 为负时，说明 A 轮偏快，所以 B_pwm 增大、A_pwm 减小。
-         */
-        motor_b_pwm = clamp_i32(STRAIGHT_B_BASE_PWM - correction,
-            STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
-        motor_a_pwm = clamp_i32(STRAIGHT_A_BASE_PWM + correction,
-            STRAIGHT_MIN_PWM, STRAIGHT_MAX_PWM);
-
         /* TB6612_SetDifferential(left, right)：左轮对应 B 电机，右轮对应 A 电机。 */
-        TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
+        TB6612_SetDifferential((int16_t)drive.motor_b_pwm,
+            (int16_t)drive.motor_a_pwm);
 
         if (report_elapsed_ms >= PID_REPORT_PERIOD_MS) {
             int32_t b_speed_avg = (report_sample_count != 0U) ?
-                (report_b_speed_sum / (int32_t)report_sample_count) : motor_b_speed;
+                (report_b_speed_sum / (int32_t)report_sample_count) : drive.motor_b_speed;
             int32_t a_speed_avg = (report_sample_count != 0U) ?
-                (report_a_speed_sum / (int32_t)report_sample_count) : motor_a_speed;
+                (report_a_speed_sum / (int32_t)report_sample_count) : drive.motor_a_speed;
             int32_t diff_avg = b_speed_avg - a_speed_avg;
 
             report_elapsed_ms = 0;
@@ -151,20 +125,135 @@ static inline void run_motor_pid_stream(void)
                 motor_b_delta, motor_a_delta,
                 motor_b_total,
                 motor_a_total,
-                distance_count,
-                distance_error,
-                distance_correction,
-                motor_b_speed, motor_a_speed,
-                speed_diff,
+                drive.distance_count,
+                drive.distance_error,
+                drive.distance_correction,
+                drive.motor_b_speed, drive.motor_a_speed,
+                drive.speed_diff,
                 b_speed_avg,
                 a_speed_avg,
                 diff_avg,
-                PID_TEST_TARGET_SPEED_DIFF,
-                error, p_term, i_term, d_term,
-                feedforward_correction,
-                feedback_correction,
-                correction,
-                motor_b_pwm, motor_a_pwm);
+                drive_config.target_speed_diff,
+                drive.pid_error, drive.p_term, drive.i_term, drive.d_term,
+                drive.feedforward_correction,
+                drive.feedback_correction,
+                drive.correction,
+                drive.motor_b_pwm, drive.motor_a_pwm);
+        }
+    }
+}
+
+/* 07 差速 PD 调参：关闭积分，保留目标差速数学前馈，累计距离差只作观测。 */
+static inline void run_motor_pd_stream(void)
+{
+    straight_pid_t pid;
+    straight_drive_config_t drive_config;
+    straight_drive_output_t drive;
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t report_b_speed_sum = 0;
+    int32_t report_a_speed_sum = 0;
+    uint32_t report_sample_count = 0;
+    int32_t motor_b_delta;
+    int32_t motor_a_delta;
+    int32_t motor_b_total;
+    int32_t motor_a_total;
+    int32_t distance_count;
+    int32_t feedforward_correction;
+
+    straight_drive_config_pd_test(&drive_config);
+    straight_pid_reset(&pid);
+    pid.kp = PD_TEST_KP;
+    pid.ki = 0;
+    pid.kd = PD_TEST_KD;
+    pid.i_limit = 0;
+    pid.corr_max = PD_TEST_CORR_MAX;
+    pid.integral = 0;
+    pid.last_error = 0;
+    feedforward_correction = straight_drive_feedforward(&drive_config);
+
+    encoder_reset_distance_counts();
+    lc_printf("PD motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld d_div=%d d_max=%d kp=%d kd=%d corr_max=%d period=%dms report=%dms\r\n",
+        drive_config.base_b_pwm,
+        drive_config.base_a_pwm,
+        drive_config.target_speed_diff,
+        drive_config.diff_ff_gain,
+        feedforward_correction,
+        drive_config.distance_corr_divisor,
+        drive_config.distance_corr_max,
+        PD_TEST_KP,
+        PD_TEST_KD,
+        drive_config.correction_max,
+        CONTROL_PERIOD_MS,
+        PID_REPORT_PERIOD_MS);
+    encoder_enable_interrupts();
+    lc_printf("PD encoder IRQ enabled, B=PA14/PA15 A=PA16/PA17\r\n");
+    TB6612_SetDifferential((int16_t)drive_config.base_b_pwm,
+        (int16_t)drive_config.base_a_pwm);
+
+    while (1) {
+        delay_ms(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (debug_uart_stop_requested() != 0U) {
+            TB6612_Brake();
+            encoder_get_total_counts(&motor_b_total, &motor_a_total);
+            distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+            lc_printf("PD motor stream stop: UART0 00 B_total=%ld A_total=%ld dist_count=%ld d_err=%ld\r\n",
+                motor_b_total,
+                motor_a_total,
+                distance_count,
+                motor_b_total - motor_a_total);
+            return;
+        }
+
+        encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        straight_drive_update(&pid,
+            &drive_config,
+            motor_b_delta,
+            motor_a_delta,
+            motor_b_total,
+            motor_a_total,
+            &drive);
+        report_b_speed_sum += drive.motor_b_speed;
+        report_a_speed_sum += drive.motor_a_speed;
+        report_sample_count++;
+
+        TB6612_SetDifferential((int16_t)drive.motor_b_pwm,
+            (int16_t)drive.motor_a_pwm);
+
+        if (report_elapsed_ms >= PID_REPORT_PERIOD_MS) {
+            int32_t b_speed_avg = (report_sample_count != 0U) ?
+                (report_b_speed_sum / (int32_t)report_sample_count) : drive.motor_b_speed;
+            int32_t a_speed_avg = (report_sample_count != 0U) ?
+                (report_a_speed_sum / (int32_t)report_sample_count) : drive.motor_a_speed;
+            int32_t diff_avg = b_speed_avg - a_speed_avg;
+
+            report_elapsed_ms = 0;
+            report_b_speed_sum = 0;
+            report_a_speed_sum = 0;
+            report_sample_count = 0;
+            lc_printf("PD t=%lu B_cnt=%ld A_cnt=%ld B_total=%ld A_total=%ld dist_count=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
+                elapsed_ms,
+                motor_b_delta, motor_a_delta,
+                motor_b_total,
+                motor_a_total,
+                drive.distance_count,
+                drive.distance_error,
+                drive.distance_correction,
+                drive.motor_b_speed, drive.motor_a_speed,
+                drive.speed_diff,
+                b_speed_avg,
+                a_speed_avg,
+                diff_avg,
+                drive_config.target_speed_diff,
+                drive.pid_error, drive.p_term, drive.i_term, drive.d_term,
+                drive.feedforward_correction,
+                drive.feedback_correction,
+                drive.correction,
+                drive.motor_b_pwm, drive.motor_a_pwm);
         }
     }
 }

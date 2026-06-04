@@ -5,8 +5,8 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 当前接线：左轮是 B 电机，右轮是 A 电机。 */
-#define STRAIGHT_B_BASE_PWM (825)
-#define STRAIGHT_A_BASE_PWM (832)
+#define STRAIGHT_B_BASE_PWM (627)
+#define STRAIGHT_A_BASE_PWM (630)
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (870)
 
@@ -50,6 +50,9 @@
 #define TASK1_REPORT_PERIOD_MS    (100)
 #define TASK1_MAX_RUN_MS          (15000)
 #define TASK1_B_LINE_ARM_COUNT    (6000)
+#define TASK1_APPROACH_SLOW_COUNT (5000)
+#define TASK1_APPROACH_B_BASE_PWM (620)
+#define TASK1_APPROACH_A_BASE_PWM (630)
 #define TASK1_FORCE_STOP_COUNT    (9500)
 #define TASK1_STOP_MIN_IR_COUNT   (1)
 
@@ -135,8 +138,17 @@
 #define PID_TEST_I_LIMIT           (600)
 #define PID_TEST_CORR_MAX          (180)
 #define PID_TEST_DIFF_FF_GAIN      (3)
-#define PID_TEST_DISTANCE_CORR_DIVISOR (18)
+#define PID_TEST_DISTANCE_CORR_DIVISOR (12)
 #define PID_TEST_DISTANCE_CORR_MAX     (45)
+
+/* 07 差速 PD 调参模式：只看 B_spd - A_spd 的 P/D 响应，累计距离差只打印不参与修正。 */
+#define PD_TEST_TARGET_SPEED_DIFF  (20)
+#define PD_TEST_KP                 (22)
+#define PD_TEST_KD                 (6)
+#define PD_TEST_CORR_MAX           (180)
+#define PD_TEST_DIFF_FF_GAIN       (3)
+#define PD_TEST_DISTANCE_CORR_DIVISOR (12)
+#define PD_TEST_DISTANCE_CORR_MAX     (0)
 
 /* 任务一的编码器距离修正和 JY62 航向修正参数。 */
 #define TASK1_DISTANCE_CORR_DIVISOR (16)
@@ -236,6 +248,8 @@
 #define TASK3_ARC_ENTRY_LOST_TURN     (220)
 #define TASK3_ARC_LOST_TURN           (170)
 #define TASK3_ARC_LOST_BASE_DROP      (70)
+#define TASK3_ARC_YAW_CORR_DIVISOR    (220)
+#define TASK3_ARC_YAW_CORR_MAX        (55)
 #define TASK3_ARC_WIDE_LINE_MIN_COUNT (6)
 #define TASK3_ARC_FINAL_LINE_MIN_COUNT (5)
 #define TASK3_ARC_MAX_RUN_MS          (12000)
