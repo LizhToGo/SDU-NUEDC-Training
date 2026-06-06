@@ -158,18 +158,8 @@ static task_id_t task_uart_read_command(void)
         }
 
         if ((ch == '\r') || (ch == '\n') || (ch == ' ') || (ch == '\t')) {
-            task_id_t command;
-
-            if (ascii_count == 0U) {
-                continue;
-            }
-
-            command = task_uart_command_from_number(ascii_value);
             ascii_value = 0U;
             ascii_count = 0U;
-            if (command != TASK_ID_NONE) {
-                return command;
-            }
             continue;
         }
 
@@ -185,14 +175,6 @@ static task_id_t task_uart_read_command(void)
             if (ascii_count == 0U) {
                 ascii_value = (uint8_t)(ch - '0');
                 ascii_count = 1U;
-
-                if ((ascii_value >= 2U) && (ascii_value <= 7U)) {
-                    command = task_uart_command_from_number(ascii_value);
-                    ascii_value = 0U;
-                    ascii_count = 0U;
-                    return command;
-                }
-
                 continue;
             }
 
@@ -2384,6 +2366,8 @@ static uint8_t task11_right_edge_seen(const ir_tracking_sample_t *sample,
 static uint8_t task11_sensor_fast_turn(const char *tag,
     int16_t motor_b_pwm,
     int16_t motor_a_pwm,
+    int16_t slow_motor_b_pwm,
+    int16_t slow_motor_a_pwm,
     uint8_t stop_mask,
     uint8_t forbid_mask,
     int32_t stop_error_max)
@@ -2398,16 +2382,24 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
     uint8_t ir_ok = 0U;
     uint8_t nav_ok = 0U;
     uint8_t line_stop_ready = 0U;
+    uint8_t line_seen = 0U;
+    uint8_t slow_mode = 0U;
+    uint8_t center_ready = 0U;
+    uint8_t wide_ready = 0U;
+    uint8_t err_ready = 0U;
 
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
     TB6612_SetDifferential(motor_b_pwm, motor_a_pwm);
-    lc_printf("%s start: sensor_fast_turn pwm=%d/%d stop_mask=0x%02X forbid=0x%02X\r\n",
+    lc_printf("%s start: sensor_fast_turn pwm=%d/%d slow=%d/%d stop_mask=0x%02X forbid=0x%02X err_max=%ld\r\n",
         tag,
         motor_b_pwm,
         motor_a_pwm,
+        slow_motor_b_pwm,
+        slow_motor_a_pwm,
         stop_mask,
-        forbid_mask);
+        forbid_mask,
+        stop_error_max);
 
     while (elapsed_ms < TASK11_FAST_TURN_TIMEOUT_MS) {
         delay_ms_with_st011(CONTROL_PERIOD_MS);
@@ -2422,21 +2414,29 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
         ir_ok = IRTracking_ReadSample(&sample);
         nav_ok = JY62_PeekNavigation(&nav);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
-        line_stop_ready = ((ir_ok != 0U) &&
+        line_seen = ((ir_ok != 0U) &&
             (sample.line_lost == 0U) &&
-            ((sample.line_mask & stop_mask) != 0U) &&
-            ((sample.line_mask & forbid_mask) == 0U) &&
-            (abs_i32(sample.error) <= stop_error_max) &&
             (sample.active_count >= TASK11_IR_TURN_STOP_MIN_COUNT)) ? 1U : 0U;
+        if ((line_seen != 0U) && (slow_mode == 0U)) {
+            slow_mode = 1U;
+            TB6612_SetDifferential(slow_motor_b_pwm, slow_motor_a_pwm);
+        }
+        center_ready = ((line_seen != 0U) &&
+            ((sample.line_mask & stop_mask) != 0U) &&
+            ((sample.line_mask & forbid_mask) == 0U)) ? 1U : 0U;
+        wide_ready = ((line_seen != 0U) && (sample.line_mask == 0xFFU)) ? 1U : 0U;
+        err_ready = ((line_seen != 0U) &&
+            (abs_i32(sample.error) <= stop_error_max)) ? 1U : 0U;
+        line_stop_ready = ((center_ready != 0U) || (wide_ready != 0U)) ? 1U : 0U;
 
         if (line_stop_ready != 0U) {
-            stop_reason = 1U;
+            stop_reason = (wide_ready != 0U) ? 4U : 1U;
             break;
         }
 
         if (report_elapsed_ms >= TASK11_FAST_TURN_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            lc_printf("%s t=%lu nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld ready=%u\r\n",
+            lc_printf("%s t=%lu nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u seen=%u center=%u wide=%u err_ok=%u ready=%u\r\n",
                 tag,
                 elapsed_ms,
                 nav_ok,
@@ -2450,6 +2450,11 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
                 (ir_ok != 0U) ? sample.error : 0,
                 motor_b_total,
                 motor_a_total,
+                slow_mode,
+                line_seen,
+                center_ready,
+                wide_ready,
+                err_ready,
                 line_stop_ready);
         }
     }
@@ -2462,9 +2467,9 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
     ir_ok = IRTracking_ReadSample(&sample);
     nav_ok = JY62_PeekNavigation(&nav);
     encoder_get_total_counts(&motor_b_total, &motor_a_total);
-    lc_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+    lc_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u\r\n",
         tag,
-        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "timeout" : "uart_stop"),
+        (stop_reason == 1U) ? "line" : ((stop_reason == 4U) ? "wide" : ((stop_reason == 2U) ? "timeout" : "uart_stop")),
         elapsed_ms,
         nav_ok,
         (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
@@ -2476,13 +2481,14 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
         (ir_ok != 0U) ? sample.line_lost : 1U,
         (ir_ok != 0U) ? sample.error : 0,
         motor_b_total,
-        motor_a_total);
+        motor_a_total,
+        slow_mode);
 
     encoder_reset_distance_counts();
-    return (stop_reason == 1U) ? 1U : 0U;
+    return ((stop_reason == 1U) || (stop_reason == 4U)) ? 1U : 0U;
 }
 
-static uint8_t task11_advance_after_point(const char *tag)
+static uint8_t task11_advance_after_point(const char *tag, int32_t advance_count)
 {
     ir_tracking_sample_t sample = {0};
     jy62_navigation_t nav = {0};
@@ -2495,7 +2501,8 @@ static uint8_t task11_advance_after_point(const char *tag)
     uint8_t ir_ok = 0U;
     uint8_t nav_ok = 0U;
 
-    if (TASK11_POINT_ADVANCE_COUNT <= 0) {
+    if (advance_count <= 0) {
+        lc_printf("%s skip: advance_count=%ld\r\n", tag, advance_count);
         return 1U;
     }
 
@@ -2505,7 +2512,7 @@ static uint8_t task11_advance_after_point(const char *tag)
         (int16_t)TASK11_POINT_ADVANCE_PWM);
     lc_printf("%s start: advance_count=%ld pwm=%d\r\n",
         tag,
-        (int32_t)TASK11_POINT_ADVANCE_COUNT,
+        advance_count,
         TASK11_POINT_ADVANCE_PWM);
 
     while (elapsed_ms < TASK11_POINT_ADVANCE_TIMEOUT_MS) {
@@ -2523,7 +2530,7 @@ static uint8_t task11_advance_after_point(const char *tag)
         nav_ok = JY62_PeekNavigation(&nav);
         ir_ok = IRTracking_ReadSample(&sample);
 
-        if (distance_count >= TASK11_POINT_ADVANCE_COUNT) {
+        if (distance_count >= advance_count) {
             stop_reason = 1U;
             break;
         }
@@ -3112,7 +3119,8 @@ static void run_task11_ir_map_test(void)
                     TASK11_LINE_MAX_PWM));
 
             if (phase == 0U) {
-                quick_turn_ok = task11_advance_after_point("TASK11_C_ADVANCE");
+                quick_turn_ok = task11_advance_after_point("TASK11_C_ADVANCE",
+                    TASK11_POINT_ADVANCE_COUNT);
                 if (quick_turn_ok == 0U) {
                     stop_reason = 2U;
                     break;
@@ -3120,11 +3128,14 @@ static void run_task11_ir_map_test(void)
                 quick_turn_ok = task11_sensor_fast_turn("TASK11_C_LEFT_TURN",
                     TASK11_LEFT_TURN_B_PWM,
                     TASK11_LEFT_TURN_A_PWM,
+                    TASK11_LEFT_TURN_SLOW_B_PWM,
+                    TASK11_LEFT_TURN_SLOW_A_PWM,
                     TASK11_IR_CENTER_6_MASK,
                     TASK11_IR_CENTER_6_FORBID_MASK,
                     TASK11_TURN_CENTER6_ERROR_MAX);
             } else if (phase == 1U) {
-                quick_turn_ok = task11_advance_after_point("TASK11_B_ADVANCE");
+                quick_turn_ok = task11_advance_after_point("TASK11_B_ADVANCE",
+                    TASK11_ARC_POINT_ADVANCE_COUNT);
                 if (quick_turn_ok == 0U) {
                     stop_reason = 2U;
                     break;
@@ -3132,11 +3143,14 @@ static void run_task11_ir_map_test(void)
                 quick_turn_ok = task11_sensor_fast_turn("TASK11_B_LEFT_TURN",
                     TASK11_LEFT_TURN_B_PWM,
                     TASK11_LEFT_TURN_A_PWM,
+                    TASK11_LEFT_TURN_SLOW_B_PWM,
+                    TASK11_LEFT_TURN_SLOW_A_PWM,
                     TASK11_IR_CENTER_4_MASK,
                     TASK11_IR_CENTER_4_FORBID_MASK,
                     TASK11_TURN_CENTER4_ERROR_MAX);
             } else if (phase == 2U) {
-                quick_turn_ok = task11_advance_after_point("TASK11_D_ADVANCE");
+                quick_turn_ok = task11_advance_after_point("TASK11_D_ADVANCE",
+                    TASK11_POINT_ADVANCE_COUNT);
                 if (quick_turn_ok == 0U) {
                     stop_reason = 2U;
                     break;
@@ -3144,11 +3158,14 @@ static void run_task11_ir_map_test(void)
                 quick_turn_ok = task11_sensor_fast_turn("TASK11_D_RIGHT_TURN",
                     TASK11_RIGHT_TURN_B_PWM,
                     TASK11_RIGHT_TURN_A_PWM,
+                    TASK11_RIGHT_TURN_SLOW_B_PWM,
+                    TASK11_RIGHT_TURN_SLOW_A_PWM,
                     TASK11_IR_CENTER_6_MASK,
                     TASK11_IR_CENTER_6_FORBID_MASK,
                     TASK11_TURN_CENTER6_ERROR_MAX);
             } else if ((uint8_t)(lap_count + 1U) < TASK11_TARGET_LAPS) {
-                quick_turn_ok = task11_advance_after_point("TASK11_A_ADVANCE");
+                quick_turn_ok = task11_advance_after_point("TASK11_A_ADVANCE",
+                    TASK11_ARC_POINT_ADVANCE_COUNT);
                 if (quick_turn_ok == 0U) {
                     stop_reason = 2U;
                     break;
@@ -3156,6 +3173,8 @@ static void run_task11_ir_map_test(void)
                 quick_turn_ok = task11_sensor_fast_turn("TASK11_A_RIGHT_TURN",
                     TASK11_RIGHT_TURN_B_PWM,
                     TASK11_RIGHT_TURN_A_PWM,
+                    TASK11_RIGHT_TURN_SLOW_B_PWM,
+                    TASK11_RIGHT_TURN_SLOW_A_PWM,
                     TASK11_IR_CENTER_4_MASK,
                     TASK11_IR_CENTER_4_FORBID_MASK,
                     TASK11_TURN_CENTER4_ERROR_MAX);
