@@ -18,6 +18,7 @@
 #define ENABLE_LINE_FOLLOW_TEST      (0)
 #define ENABLE_JY62_NAV              (1)
 #define ENABLE_ENCODER_SELF_TEST     (0)
+#define TASK_UART_RX_ECHO_ENABLE     (1)
 
 /* JY62 陀螺仪的置零和状态打印周期。 */
 #define JY62_BOOT_ZERO_DELAY_MS    (300)

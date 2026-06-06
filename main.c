@@ -37,6 +37,23 @@ static uint8_t g_task6_c_turn_requested;
 #define task11_event_printf(...) ((void)0)
 #endif
 
+#ifndef TASK_UART_RX_ECHO_ENABLE
+#define TASK_UART_RX_ECHO_ENABLE (0)
+#endif
+
+static void task_uart_echo_rx_byte(uint8_t ch)
+{
+#if TASK_UART_RX_ECHO_ENABLE
+    if ((ch >= 0x20U) && (ch <= 0x7EU)) {
+        lc_printf("TASK_UART_RX byte=0x%02X ascii='%c'\r\n", ch, ch);
+    } else {
+        lc_printf("TASK_UART_RX byte=0x%02X\r\n", ch);
+    }
+#else
+    (void)ch;
+#endif
+}
+
 static void st011_set_active(uint8_t active)
 {
 #if ST011_ACTIVE_LOW
@@ -155,53 +172,127 @@ static task_id_t task_uart_command_from_number(uint8_t number)
     }
 }
 
-static task_id_t task_uart_read_command(void)
+static task_id_t task_uart_command_from_hex_byte(uint8_t value)
 {
-    static uint8_t ascii_value = 0U;
-    static uint8_t ascii_count = 0U;
+    switch (value) {
+    case 0x01U:
+        return TASK_ID_1;
+    case 0x02U:
+        return TASK_ID_2;
+    case 0x03U:
+        return TASK_ID_3;
+    case 0x04U:
+        return TASK_ID_4;
+    case 0x05U:
+        return TASK_ID_5;
+    case 0x06U:
+        return TASK_ID_6;
+    case 0x07U:
+        return TASK_ID_7;
+    case 0x10U:
+        return TASK_ID_10;
+    case 0x11U:
+        return TASK_ID_11;
+    default:
+        return TASK_ID_NONE;
+    }
+}
+
+static task_id_t task_uart_read_command(uint8_t allow_binary_stop)
+{
+    static uint8_t frame_buf[3] = {0U};
+    static uint8_t frame_len = 0U;
 
     while (DL_UART_Main_isRXFIFOEmpty(UART_0_INST) == false) {
         uint8_t ch = DL_UART_Main_receiveData(UART_0_INST);
 
+        if (allow_binary_stop == 0U) {
+            task_uart_echo_rx_byte(ch);
+        }
+
         if (ch == 0x00U) {
-            ascii_value = 0U;
-            ascii_count = 0U;
-            return TASK_ID_STOP;
+            if ((allow_binary_stop != 0U) && (frame_len == 0U)) {
+                frame_len = 0U;
+                return TASK_ID_STOP;
+            }
+            continue;
         }
 
         if ((ch == '\r') || (ch == '\n') || (ch == ' ') || (ch == '\t')) {
-            ascii_value = 0U;
-            ascii_count = 0U;
+            if ((frame_len == 1U) &&
+                ((frame_buf[0] == 't') || (frame_buf[0] == 'T'))) {
+                continue;
+            }
+            frame_len = 0U;
             continue;
         }
 
-        if ((ch >= 0x01U) && (ch <= 0x07U)) {
-            ascii_value = 0U;
-            ascii_count = 0U;
-            return (task_id_t)ch;
+        {
+            task_id_t command = task_uart_command_from_hex_byte(ch);
+            if (command != TASK_ID_NONE) {
+                frame_len = 0U;
+                return command;
+            }
+        }
+
+        if ((ch >= 0x01U) && (ch <= 0x1FU)) {
+            frame_len = 0U;
+            continue;
+        }
+
+        if ((ch == 't') || (ch == 'T')) {
+            frame_buf[0] = ch;
+            frame_len = 1U;
+            continue;
         }
 
         if ((ch >= '0') && (ch <= '9')) {
-            task_id_t command;
-
-            if (ascii_count == 0U) {
-                ascii_value = (uint8_t)(ch - '0');
-                ascii_count = 1U;
+            if (frame_len == 0U) {
+                frame_buf[0] = ch;
+                frame_len = 1U;
                 continue;
             }
 
-            ascii_value = (uint8_t)((ascii_value * 10U) + (ch - '0'));
-            command = task_uart_command_from_number(ascii_value);
-            ascii_value = 0U;
-            ascii_count = 0U;
-            if (command != TASK_ID_NONE) {
-                return command;
+            if ((frame_len == 1U) &&
+                ((frame_buf[0] == 't') || (frame_buf[0] == 'T'))) {
+                frame_buf[1] = ch;
+                frame_len = 2U;
+                continue;
             }
+
+            if (frame_len == 1U) {
+                task_id_t command;
+                uint8_t value = (uint8_t)(((frame_buf[0] - '0') * 10U) +
+                    (ch - '0'));
+
+                command = task_uart_command_from_number(value);
+                frame_len = 0U;
+                if (command != TASK_ID_NONE) {
+                    return command;
+                }
+                continue;
+            }
+
+            if ((frame_len == 2U) &&
+                ((frame_buf[0] == 't') || (frame_buf[0] == 'T'))) {
+                task_id_t command;
+                uint8_t value = (uint8_t)(((frame_buf[1] - '0') * 10U) +
+                    (ch - '0'));
+
+                command = task_uart_command_from_number(value);
+                frame_len = 0U;
+                if (command != TASK_ID_NONE) {
+                    return command;
+                }
+                continue;
+            }
+
+            frame_buf[0] = ch;
+            frame_len = 1U;
             continue;
         }
 
-        ascii_value = 0U;
-        ascii_count = 0U;
+        frame_len = 0U;
     }
 
     return TASK_ID_NONE;
@@ -209,7 +300,7 @@ static task_id_t task_uart_read_command(void)
 
 static uint8_t task_uart_stop_requested(void)
 {
-    return (task_uart_read_command() == TASK_ID_STOP) ? 1U : 0U;
+    return (task_uart_read_command(1U) == TASK_ID_STOP) ? 1U : 0U;
 }
 
 static uint8_t task_button_pin_is_pressed(GPIO_Regs *port, uint32_t pin)
@@ -308,7 +399,7 @@ static task_id_t wait_task_uart_command(void)
     task_id_t task_id;
 
     while (1) {
-        task_id = task_uart_read_command();
+        task_id = task_uart_read_command(0U);
         if (task_id != TASK_ID_NONE) {
             if (task_id == TASK_ID_STOP) {
                 TB6612_Brake();
@@ -324,7 +415,7 @@ static task_id_t wait_task_uart_command(void)
             delay_ms_with_st011(TASK_BUTTON_DEBOUNCE_MS);
             if (task_button_read() == task_id) {
                 while (task_button_read() == task_id) {
-                    (void)task_uart_read_command();
+                    (void)task_uart_read_command(0U);
                     delay_ms_with_st011(TASK_BUTTON_IDLE_MS);
                 }
                 delay_ms_with_st011(TASK_BUTTON_DEBOUNCE_MS);
@@ -4394,7 +4485,7 @@ static void run_task_dispatcher(void)
 
     st011_set_active(0U);
     TB6612_Brake();
-    lc_printf("TASK ready: A26/UART0 01=task1, A24/UART0 02=task2, B24/UART0 03=task3, A22/UART0 04=task4, UART0 05=PID test, 06=C turn, 07=PD, 10=AB zero, 11=IR map, 00=stop\r\n");
+    lc_printf("TASK ready: buttons A26/A24/B24/A22 or UART0 HEX bytes 01..07,10,11; 00=stop while running; ASCII t01..t11 still ok\r\n");
 
     while (1) {
         task_id = wait_task_uart_command();
