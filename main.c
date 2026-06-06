@@ -5,6 +5,7 @@
 #include "bsp_jy62.h"
 #include "app_config.h"
 #include "app_control.h"
+#include "app_straight.h"
 #include "app_debug_modes.h"
 #include "bsp_encoder.h"
 
@@ -2322,6 +2323,259 @@ static void task11_print_point(const char *name, const task11_line_result_t *res
         (result->ir_ok != 0U) ? result->sample.error : 0);
 }
 
+static void task11_diff_pid_reset(straight_pid_t *pid)
+{
+    straight_pid_reset(pid);
+    pid->kp = TASK11_DIFF_KP;
+    pid->ki = 0;
+    pid->kd = TASK11_DIFF_KD;
+    pid->i_limit = 0;
+    pid->corr_max = TASK11_DIFF_CORR_MAX;
+    pid->integral = 0;
+    pid->last_error = 0;
+}
+
+static void task11_drive_config(straight_drive_config_t *config,
+    int32_t base_pwm,
+    int32_t target_speed_diff)
+{
+    config->base_b_pwm = base_pwm;
+    config->base_a_pwm = base_pwm;
+    config->target_speed_diff = target_speed_diff;
+    config->diff_ff_gain = TASK11_DIFF_FF_GAIN;
+    config->distance_corr_divisor = 1;
+    config->distance_corr_max = 0;
+    config->correction_max = TASK11_DIFF_CORR_MAX;
+    config->min_pwm = TASK11_LINE_MIN_PWM;
+    config->max_pwm = TASK11_LINE_MAX_PWM;
+}
+
+static uint8_t task11_ir_mask_seen(const ir_tracking_sample_t *sample,
+    uint8_t seen_mask,
+    uint8_t forbid_mask)
+{
+    if ((sample == 0) || (sample->line_lost != 0U)) {
+        return 0U;
+    }
+
+    if ((sample->line_mask & seen_mask) == 0U) {
+        return 0U;
+    }
+
+    return ((sample->line_mask & forbid_mask) == 0U) ? 1U : 0U;
+}
+
+static uint8_t task11_left_edge_seen(const ir_tracking_sample_t *sample,
+    uint8_t require_right_clear)
+{
+    return task11_ir_mask_seen(sample,
+        TASK11_IR_LEFT_EDGE_MASK,
+        (require_right_clear != 0U) ? TASK11_IR_RIGHT_EDGE_MASK : 0U);
+}
+
+static uint8_t task11_right_edge_seen(const ir_tracking_sample_t *sample,
+    uint8_t require_left_clear)
+{
+    return task11_ir_mask_seen(sample,
+        TASK11_IR_RIGHT_EDGE_MASK,
+        (require_left_clear != 0U) ? TASK11_IR_LEFT_EDGE_MASK : 0U);
+}
+
+static uint8_t task11_sensor_fast_turn(const char *tag,
+    int16_t motor_b_pwm,
+    int16_t motor_a_pwm,
+    uint8_t stop_mask,
+    uint8_t forbid_mask,
+    int32_t stop_error_max)
+{
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    uint8_t stop_reason = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+    uint8_t line_stop_ready = 0U;
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    TB6612_SetDifferential(motor_b_pwm, motor_a_pwm);
+    lc_printf("%s start: sensor_fast_turn pwm=%d/%d stop_mask=0x%02X forbid=0x%02X\r\n",
+        tag,
+        motor_b_pwm,
+        motor_a_pwm,
+        stop_mask,
+        forbid_mask);
+
+    while (elapsed_ms < TASK11_FAST_TURN_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        ir_ok = IRTracking_ReadSample(&sample);
+        nav_ok = JY62_PeekNavigation(&nav);
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        line_stop_ready = ((ir_ok != 0U) &&
+            (sample.line_lost == 0U) &&
+            ((sample.line_mask & stop_mask) != 0U) &&
+            ((sample.line_mask & forbid_mask) == 0U) &&
+            (abs_i32(sample.error) <= stop_error_max) &&
+            (sample.active_count >= TASK11_IR_TURN_STOP_MIN_COUNT)) ? 1U : 0U;
+
+        if (line_stop_ready != 0U) {
+            stop_reason = 1U;
+            break;
+        }
+
+        if (report_elapsed_ms >= TASK11_FAST_TURN_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            lc_printf("%s t=%lu nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld ready=%u\r\n",
+                tag,
+                elapsed_ms,
+                nav_ok,
+                (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+                (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+                ir_ok,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                (ir_ok != 0U) ? sample.error : 0,
+                motor_b_total,
+                motor_a_total,
+                line_stop_ready);
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    TB6612_Brake();
+    ir_ok = IRTracking_ReadSample(&sample);
+    nav_ok = JY62_PeekNavigation(&nav);
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    lc_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+        tag,
+        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "timeout" : "uart_stop"),
+        elapsed_ms,
+        nav_ok,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0,
+        motor_b_total,
+        motor_a_total);
+
+    encoder_reset_distance_counts();
+    return (stop_reason == 1U) ? 1U : 0U;
+}
+
+static uint8_t task11_advance_after_point(const char *tag)
+{
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t distance_count = 0;
+    uint8_t stop_reason = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+
+    if (TASK11_POINT_ADVANCE_COUNT <= 0) {
+        return 1U;
+    }
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    TB6612_SetDifferential((int16_t)TASK11_POINT_ADVANCE_PWM,
+        (int16_t)TASK11_POINT_ADVANCE_PWM);
+    lc_printf("%s start: advance_count=%ld pwm=%d\r\n",
+        tag,
+        (int32_t)TASK11_POINT_ADVANCE_COUNT,
+        TASK11_POINT_ADVANCE_PWM);
+
+    while (elapsed_ms < TASK11_POINT_ADVANCE_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+        nav_ok = JY62_PeekNavigation(&nav);
+        ir_ok = IRTracking_ReadSample(&sample);
+
+        if (distance_count >= TASK11_POINT_ADVANCE_COUNT) {
+            stop_reason = 1U;
+            break;
+        }
+
+        if (report_elapsed_ms >= TASK11_FAST_TURN_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            lc_printf("%s t=%lu dist=%ld nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+                tag,
+                elapsed_ms,
+                distance_count,
+                nav_ok,
+                (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+                (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+                ir_ok,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                (ir_ok != 0U) ? sample.error : 0,
+                motor_b_total,
+                motor_a_total);
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+    nav_ok = JY62_PeekNavigation(&nav);
+    ir_ok = IRTracking_ReadSample(&sample);
+    lc_printf("%s stop: reason=%s t=%lu dist=%ld nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+        tag,
+        (stop_reason == 1U) ? "distance" : ((stop_reason == 2U) ? "timeout" : "uart_stop"),
+        elapsed_ms,
+        distance_count,
+        nav_ok,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0,
+        motor_b_total,
+        motor_a_total);
+
+    return (stop_reason == 1U) ? 1U : 0U;
+}
+
 static uint8_t task11_align_to_yaw(const char *tag, int32_t target_cdeg)
 {
     uint32_t elapsed_ms = 0;
@@ -2626,8 +2880,14 @@ static void run_task11_ir_map_test(void)
 {
     task11_line_result_t result;
     ir_tracking_sample_t sample = {0};
+    straight_pid_t diff_pid;
+    straight_drive_config_t drive_config;
+    straight_drive_output_t drive;
     uint32_t elapsed_ms = 0;
     uint32_t report_elapsed_ms = 0;
+    int32_t report_b_speed_sum = 0;
+    int32_t report_a_speed_sum = 0;
+    uint32_t report_sample_count = 0;
     int32_t motor_b_delta;
     int32_t motor_a_delta;
     int32_t motor_b_total;
@@ -2643,7 +2903,6 @@ static void run_task11_ir_map_test(void)
     uint8_t lap_count = 0U;
     uint8_t phase = 0U;
     uint8_t nav_ok;
-    uint8_t exit_line_seen = 0U;
     uint8_t straight_point_confirm = 0U;
     uint8_t ir_ok = 0U;
     uint8_t stop_reason = 0U;
@@ -2653,13 +2912,20 @@ static void run_task11_ir_map_test(void)
     IRTracking_Init();
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
+    task11_diff_pid_reset(&diff_pid);
     nav_ok = task11_peek_yaw(&yaw_start, &gzlp_mdps);
     yaw_cdeg = yaw_start;
-    lc_printf("TASK11 start: continuous_ir laps=%u yaw=%ld nav=%u base=%d report=%d\r\n",
+    lc_printf("TASK11 start: continuous_ir laps=%u yaw=%ld nav=%u base=%d arc_base=%d entry_diff=%d cruise_diff=%d ff_gain=%d kp=%d kd=%d report=%d\r\n",
         TASK11_TARGET_LAPS,
         yaw_cdeg,
         nav_ok,
         TASK11_LINE_BASE_PWM,
+        TASK11_ARC_BASE_PWM,
+        TASK11_ARC_ENTRY_TARGET_DIFF,
+        TASK11_ARC_CRUISE_TARGET_DIFF,
+        TASK11_DIFF_FF_GAIN,
+        TASK11_DIFF_KP,
+        TASK11_DIFF_KD,
         TASK11_LINE_REPORT_PERIOD_MS);
 
     while ((elapsed_ms < TASK11_TOTAL_MAX_RUN_MS) && (lap_count < TASK11_TARGET_LAPS)) {
@@ -2667,53 +2933,56 @@ static void run_task11_ir_map_test(void)
         int32_t phase_distance_count;
         int32_t raw_error = 0;
         int32_t derivative = 0;
-        int32_t turn = 0;
         int32_t base_pwm = TASK11_LINE_BASE_PWM;
         int32_t left_pwm;
         int32_t right_pwm;
         int32_t point_arm_count;
         int32_t force_count;
-        int32_t yaw_arm_cdeg;
         int32_t expected_turn_dir;
+        int32_t target_speed_diff;
+        int32_t ir_turn = 0;
+        const char *phase_name;
         const char *point_name;
         const char *force_name;
         uint8_t arc_mode;
         uint8_t line_valid;
         uint8_t straight_point_candidate;
+        uint8_t edge_point_seen;
+        uint8_t quick_turn_ok = 1U;
         uint8_t point_ready = 0U;
 
         if (phase == 0U) {
+            phase_name = "AC";
             point_name = "C_LINE";
             force_name = "C_FORCE";
             arc_mode = 0U;
             expected_turn_dir = 0;
-            point_arm_count = TASK11_STRAIGHT_POINT_ARM_COUNT;
+            point_arm_count = TASK11_AC_POINT_ARM_COUNT;
             force_count = TASK11_STRAIGHT_FORCE_COUNT;
-            yaw_arm_cdeg = 0;
         } else if (phase == 1U) {
+            phase_name = "CB";
             point_name = "B_EXIT";
             force_name = "B_FORCE";
             arc_mode = 1U;
             expected_turn_dir = TASK3_ARC_TURN_LEFT;
             point_arm_count = TASK11_ARC_POINT_ARM_COUNT;
             force_count = TASK11_ARC_FORCE_COUNT;
-            yaw_arm_cdeg = TASK11_ARC_POINT_YAW_ARM_CDEG;
         } else if (phase == 2U) {
+            phase_name = "BD";
             point_name = "D_LINE";
             force_name = "D_FORCE";
             arc_mode = 0U;
             expected_turn_dir = 0;
-            point_arm_count = TASK11_STRAIGHT_POINT_ARM_COUNT;
+            point_arm_count = TASK11_BD_POINT_ARM_COUNT;
             force_count = TASK11_STRAIGHT_FORCE_COUNT;
-            yaw_arm_cdeg = 0;
         } else {
+            phase_name = "DA";
             point_name = "A_FINISH";
             force_name = "A_FORCE";
             arc_mode = 1U;
             expected_turn_dir = TASK3_ARC_TURN_RIGHT;
             point_arm_count = TASK11_ARC_POINT_ARM_COUNT;
             force_count = TASK11_ARC_FORCE_COUNT;
-            yaw_arm_cdeg = TASK11_ARC_POINT_YAW_ARM_CDEG;
         }
 
         delay_ms_with_st011(CONTROL_PERIOD_MS);
@@ -2733,18 +3002,69 @@ static void run_task11_ir_map_test(void)
         yaw_progress_cdeg = (nav_ok != 0U) ? abs_i32(normalize_cdeg(yaw_cdeg - yaw_start)) : 0;
         ir_ok = IRTracking_ReadSample(&sample);
         line_valid = ((ir_ok != 0U) && (sample.line_lost == 0U)) ? 1U : 0U;
-
-        if ((arc_mode != 0U) &&
-            (phase_distance_count >= point_arm_count) &&
-            (line_valid != 0U)) {
-            exit_line_seen = 1U;
+        if (phase == 0U) {
+            edge_point_seen = ((ir_ok != 0U) &&
+                (task11_left_edge_seen(&sample, 1U) != 0U)) ? 1U : 0U;
+        } else if (phase == 1U) {
+            edge_point_seen = ((ir_ok != 0U) &&
+                (task11_left_edge_seen(&sample, 0U) != 0U)) ? 1U : 0U;
+        } else if (phase == 2U) {
+            edge_point_seen = ((ir_ok != 0U) &&
+                (task11_right_edge_seen(&sample, 0U) != 0U)) ? 1U : 0U;
+        } else {
+            edge_point_seen = ((ir_ok != 0U) &&
+                (task11_right_edge_seen(&sample, 0U) != 0U)) ? 1U : 0U;
+        }
+        if (arc_mode != 0U) {
+            base_pwm = TASK11_ARC_BASE_PWM;
+            target_speed_diff = expected_turn_dir *
+                ((phase_distance_count < TASK11_ARC_ENTRY_COUNT) ?
+                    TASK11_ARC_ENTRY_TARGET_DIFF :
+                    TASK11_ARC_CRUISE_TARGET_DIFF);
+        } else {
+            base_pwm = TASK11_STRAIGHT_BASE_PWM;
+            target_speed_diff = TASK11_STRAIGHT_TARGET_DIFF;
+        }
+        if (line_valid == 0U) {
+            base_pwm -= TASK11_LINE_LOST_BASE_DROP;
+        }
+        task11_drive_config(&drive_config, base_pwm, target_speed_diff);
+        straight_drive_update(&diff_pid,
+            &drive_config,
+            motor_b_delta,
+            motor_a_delta,
+            motor_b_total,
+            motor_a_total,
+            &drive);
+        report_b_speed_sum += drive.motor_b_speed;
+        report_a_speed_sum += drive.motor_a_speed;
+        report_sample_count++;
+        if (line_valid != 0U) {
+            raw_error = sample.error;
+            filtered_error += (raw_error - filtered_error) / TASK11_LINE_ERROR_FILTER_DIVISOR;
+            derivative = clamp_i32(filtered_error - last_filtered_error,
+                -TASK11_LINE_DERIV_LIMIT,
+                TASK11_LINE_DERIV_LIMIT);
+            last_filtered_error = filtered_error;
+            ir_turn = (filtered_error / TASK11_LINE_TURN_DIVISOR) +
+                (derivative / TASK11_LINE_KD_DIVISOR);
+            ir_turn = clamp_i32(ir_turn,
+                -TASK11_LINE_TURN_LIMIT,
+                TASK11_LINE_TURN_LIMIT);
+            last_turn = ir_turn;
+        } else {
+            if (last_turn != 0) {
+                ir_turn = clamp_i32(last_turn,
+                    -TASK11_LINE_LOST_TURN,
+                    TASK11_LINE_LOST_TURN);
+            } else {
+                ir_turn = expected_turn_dir * TASK11_LINE_LOST_TURN;
+            }
         }
 
         if (arc_mode == 0U) {
             straight_point_candidate = ((phase_distance_count >= point_arm_count) &&
-                (line_valid != 0U) &&
-                ((abs_i32(sample.error) >= TASK11_STRAIGHT_POINT_ERROR_MIN) ||
-                 (sample.active_count >= TASK11_STRAIGHT_POINT_WIDE_COUNT))) ? 1U : 0U;
+                (edge_point_seen != 0U)) ? 1U : 0U;
             if (straight_point_candidate != 0U) {
                 if (straight_point_confirm < TASK11_STRAIGHT_POINT_CONFIRM_COUNT) {
                     straight_point_confirm++;
@@ -2755,10 +3075,7 @@ static void run_task11_ir_map_test(void)
             point_ready = (straight_point_confirm >= TASK11_STRAIGHT_POINT_CONFIRM_COUNT) ? 1U : 0U;
         } else {
             point_ready = ((phase_distance_count >= point_arm_count) &&
-                (yaw_progress_cdeg >= yaw_arm_cdeg) &&
-                (exit_line_seen != 0U) &&
-                ((line_valid == 0U) ||
-                 (sample.active_count >= TASK11_ARC_POINT_WIDE_COUNT))) ? 1U : 0U;
+                (edge_point_seen != 0U)) ? 1U : 0U;
         }
 
         if (point_ready != 0U) {
@@ -2770,6 +3087,83 @@ static void run_task11_ir_map_test(void)
             result.ir_ok = ir_ok;
             result.sample = sample;
             task11_print_point(point_name, &result);
+            st011_start_pulse(TASK11_POINT_ALARM_MS);
+            lc_printf("TASK11_POINT_DRIVE seg=%s edge=%u target_diff=%ld B_spd=%ld A_spd=%ld diff=%ld err=%ld P=%ld D=%ld ff=%ld fb=%ld corr=%ld ir_turn=%ld drive_pwm=%ld/%ld final_pwm=%ld/%ld\r\n",
+                phase_name,
+                edge_point_seen,
+                drive_config.target_speed_diff,
+                drive.motor_b_speed,
+                drive.motor_a_speed,
+                drive.speed_diff,
+                drive.pid_error,
+                drive.p_term,
+                drive.d_term,
+                drive.feedforward_correction,
+                drive.feedback_correction,
+                drive.correction,
+                ir_turn,
+                drive.motor_b_pwm,
+                drive.motor_a_pwm,
+                clamp_i32(drive.motor_b_pwm + ir_turn,
+                    TASK11_LINE_MIN_PWM,
+                    TASK11_LINE_MAX_PWM),
+                clamp_i32(drive.motor_a_pwm - ir_turn,
+                    TASK11_LINE_MIN_PWM,
+                    TASK11_LINE_MAX_PWM));
+
+            if (phase == 0U) {
+                quick_turn_ok = task11_advance_after_point("TASK11_C_ADVANCE");
+                if (quick_turn_ok == 0U) {
+                    stop_reason = 2U;
+                    break;
+                }
+                quick_turn_ok = task11_sensor_fast_turn("TASK11_C_LEFT_TURN",
+                    TASK11_LEFT_TURN_B_PWM,
+                    TASK11_LEFT_TURN_A_PWM,
+                    TASK11_IR_CENTER_6_MASK,
+                    TASK11_IR_CENTER_6_FORBID_MASK,
+                    TASK11_TURN_CENTER6_ERROR_MAX);
+            } else if (phase == 1U) {
+                quick_turn_ok = task11_advance_after_point("TASK11_B_ADVANCE");
+                if (quick_turn_ok == 0U) {
+                    stop_reason = 2U;
+                    break;
+                }
+                quick_turn_ok = task11_sensor_fast_turn("TASK11_B_LEFT_TURN",
+                    TASK11_LEFT_TURN_B_PWM,
+                    TASK11_LEFT_TURN_A_PWM,
+                    TASK11_IR_CENTER_4_MASK,
+                    TASK11_IR_CENTER_4_FORBID_MASK,
+                    TASK11_TURN_CENTER4_ERROR_MAX);
+            } else if (phase == 2U) {
+                quick_turn_ok = task11_advance_after_point("TASK11_D_ADVANCE");
+                if (quick_turn_ok == 0U) {
+                    stop_reason = 2U;
+                    break;
+                }
+                quick_turn_ok = task11_sensor_fast_turn("TASK11_D_RIGHT_TURN",
+                    TASK11_RIGHT_TURN_B_PWM,
+                    TASK11_RIGHT_TURN_A_PWM,
+                    TASK11_IR_CENTER_6_MASK,
+                    TASK11_IR_CENTER_6_FORBID_MASK,
+                    TASK11_TURN_CENTER6_ERROR_MAX);
+            } else if ((uint8_t)(lap_count + 1U) < TASK11_TARGET_LAPS) {
+                quick_turn_ok = task11_advance_after_point("TASK11_A_ADVANCE");
+                if (quick_turn_ok == 0U) {
+                    stop_reason = 2U;
+                    break;
+                }
+                quick_turn_ok = task11_sensor_fast_turn("TASK11_A_RIGHT_TURN",
+                    TASK11_RIGHT_TURN_B_PWM,
+                    TASK11_RIGHT_TURN_A_PWM,
+                    TASK11_IR_CENTER_4_MASK,
+                    TASK11_IR_CENTER_4_FORBID_MASK,
+                    TASK11_TURN_CENTER4_ERROR_MAX);
+            }
+            if (quick_turn_ok == 0U) {
+                stop_reason = 2U;
+                break;
+            }
 
             if (phase == 3U) {
                 lap_count++;
@@ -2781,10 +3175,18 @@ static void run_task11_ir_map_test(void)
             } else {
                 phase++;
             }
-            phase_start_count = total_distance_count;
-            yaw_start = yaw_cdeg;
-            exit_line_seen = 0U;
+            phase_start_count = 0;
+            (void)task11_peek_yaw(&yaw_start, &gzlp_mdps);
             straight_point_confirm = 0U;
+            filtered_error = 0;
+            last_filtered_error = 0;
+            last_turn = 0;
+            report_elapsed_ms = 0;
+            report_b_speed_sum = 0;
+            report_a_speed_sum = 0;
+            report_sample_count = 0;
+            task11_diff_pid_reset(&diff_pid);
+            continue;
         } else if (phase_distance_count >= force_count) {
             result.reason = 2U;
             result.elapsed_ms = elapsed_ms;
@@ -2794,6 +3196,29 @@ static void run_task11_ir_map_test(void)
             result.ir_ok = ir_ok;
             result.sample = sample;
             task11_print_point(force_name, &result);
+            st011_start_pulse(TASK11_POINT_ALARM_MS);
+            lc_printf("TASK11_POINT_DRIVE seg=%s edge=%u target_diff=%ld B_spd=%ld A_spd=%ld diff=%ld err=%ld P=%ld D=%ld ff=%ld fb=%ld corr=%ld ir_turn=%ld drive_pwm=%ld/%ld final_pwm=%ld/%ld\r\n",
+                phase_name,
+                edge_point_seen,
+                drive_config.target_speed_diff,
+                drive.motor_b_speed,
+                drive.motor_a_speed,
+                drive.speed_diff,
+                drive.pid_error,
+                drive.p_term,
+                drive.d_term,
+                drive.feedforward_correction,
+                drive.feedback_correction,
+                drive.correction,
+                ir_turn,
+                drive.motor_b_pwm,
+                drive.motor_a_pwm,
+                clamp_i32(drive.motor_b_pwm + ir_turn,
+                    TASK11_LINE_MIN_PWM,
+                    TASK11_LINE_MAX_PWM),
+                clamp_i32(drive.motor_a_pwm - ir_turn,
+                    TASK11_LINE_MIN_PWM,
+                    TASK11_LINE_MAX_PWM));
 
             if (phase == 3U) {
                 lap_count++;
@@ -2807,55 +3232,83 @@ static void run_task11_ir_map_test(void)
             }
             phase_start_count = total_distance_count;
             yaw_start = yaw_cdeg;
-            exit_line_seen = 0U;
             straight_point_confirm = 0U;
+            filtered_error = 0;
+            last_filtered_error = 0;
+            last_turn = 0;
+            report_elapsed_ms = 0;
+            report_b_speed_sum = 0;
+            report_a_speed_sum = 0;
+            report_sample_count = 0;
+            task11_diff_pid_reset(&diff_pid);
+            continue;
         }
 
-        if (line_valid != 0U) {
-            raw_error = sample.error;
-            filtered_error += (raw_error - filtered_error) / TASK11_LINE_ERROR_FILTER_DIVISOR;
-            derivative = clamp_i32(filtered_error - last_filtered_error,
-                -TASK11_LINE_DERIV_LIMIT,
-                TASK11_LINE_DERIV_LIMIT);
-            last_filtered_error = filtered_error;
-            turn = (filtered_error / TASK11_LINE_TURN_DIVISOR) +
-                (derivative / TASK11_LINE_KD_DIVISOR);
-            turn = clamp_i32(turn, -TASK11_LINE_TURN_LIMIT, TASK11_LINE_TURN_LIMIT);
-            last_turn = turn;
-        } else {
-            base_pwm -= TASK11_LINE_LOST_BASE_DROP;
-            if (last_turn != 0) {
-                turn = clamp_i32(last_turn, -TASK11_LINE_LOST_TURN, TASK11_LINE_LOST_TURN);
-            } else {
-                turn = expected_turn_dir * TASK11_LINE_LOST_TURN;
-            }
-        }
-
-        left_pwm = clamp_i32(base_pwm + turn,
+        left_pwm = clamp_i32(drive.motor_b_pwm + ir_turn,
             TASK11_LINE_MIN_PWM,
             TASK11_LINE_MAX_PWM);
-        right_pwm = clamp_i32(base_pwm - turn,
+        right_pwm = clamp_i32(drive.motor_a_pwm - ir_turn,
             TASK11_LINE_MIN_PWM,
             TASK11_LINE_MAX_PWM);
         TB6612_SetDifferential((int16_t)left_pwm, (int16_t)right_pwm);
 
         if (report_elapsed_ms >= TASK11_LINE_REPORT_PERIOD_MS) {
+            int32_t b_speed_avg = (report_sample_count != 0U) ?
+                (report_b_speed_sum / (int32_t)report_sample_count) : drive.motor_b_speed;
+            int32_t a_speed_avg = (report_sample_count != 0U) ?
+                (report_a_speed_sum / (int32_t)report_sample_count) : drive.motor_a_speed;
+            int32_t diff_avg = b_speed_avg - a_speed_avg;
+
             report_elapsed_ms = 0;
-            lc_printf("TASK11 lap=%u phase=%u t=%lu dist=%ld yaw=%ld mask=0x%02X err=%ld turn=%ld pwm=%ld/%ld\r\n",
+            report_b_speed_sum = 0;
+            report_a_speed_sum = 0;
+            report_sample_count = 0;
+            lc_printf("TASK11_DATA lap=%u seg=%s phase=%u t=%lu dist=%ld edge=%u yprog=%ld yaw=%ld nav=%u gzlp=%ld raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld filt=%ld der=%ld ir_turn=%ld base=%ld target_diff=%ld B_cnt=%ld A_cnt=%ld B_total=%ld A_total=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld pd_err=%ld P=%ld D=%ld ff=%ld fb=%ld corr=%ld pwm=%ld/%ld\r\n",
                 lap_count,
+                phase_name,
                 phase,
                 elapsed_ms,
                 phase_distance_count,
+                edge_point_seen,
+                yaw_progress_cdeg,
                 yaw_cdeg,
+                nav_ok,
+                gzlp_mdps,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
                 (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
                 (ir_ok != 0U) ? sample.error : 0,
-                turn,
+                filtered_error,
+                derivative,
+                ir_turn,
+                base_pwm,
+                drive_config.target_speed_diff,
+                motor_b_delta,
+                motor_a_delta,
+                motor_b_total,
+                motor_a_total,
+                drive.motor_b_speed,
+                drive.motor_a_speed,
+                drive.speed_diff,
+                b_speed_avg,
+                a_speed_avg,
+                diff_avg,
+                drive.pid_error,
+                drive.p_term,
+                drive.d_term,
+                drive.feedforward_correction,
+                drive.feedback_correction,
+                drive.correction,
                 left_pwm,
                 right_pwm);
         }
     }
 
     TB6612_Brake();
+    if (g_st011_pulse_remaining_ms != 0U) {
+        delay_ms_with_st011(TASK11_POINT_ALARM_MS);
+    }
     encoder_reset_distance_counts();
     if (stop_reason == 0U) {
         stop_reason = (lap_count >= TASK11_TARGET_LAPS) ? 1U :
