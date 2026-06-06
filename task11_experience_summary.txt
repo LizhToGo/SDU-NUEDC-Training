@@ -1,0 +1,38 @@
+records=753
+ram_begin=1 cfg=1 ram_end=1
+seq: count=753 unique=753 range=0..752 missing=0
+evt_idx: count=98 unique=98 range=0..97 missing=0
+sum_idx: count=20 unique=20 range=0..19 missing=0
+win_idx: count=626 unique=626 range=0..625 missing=0
+EVT: expected=98 section=98 actual=98 end=1 ok=1
+SUM: expected=20 section=20 actual=20 end=1 ok=1
+WIN: expected=626 section=626 actual=626 end=1 ok=1
+overflow: win_ov=0 ev_ov=0 sum_ov=0 ok=1
+complete: lap=5 phase=3 t=29780 reason=point
+
+SUM_BY_SEG
+AC: n=5 dist=[8414, 8013, 8024, 8033, 8018] dist_avg=8100.4 yprog=[365, 2409, 2044, 2292, 2101] avg_herr=[396, 2260, 1916, 2000, 1921] max_herr=[730, 2540, 2297, 2316, 2213] lost_sum=0 nav_lost_sum=0
+CB: n=5 dist=[7137, 7062, 6996, 7025, 7050] dist_avg=7054.0 yprog=[15568, 15222, 15214, 14843, 15132] avg_herr=[325, 386, 312, 674, 388] max_herr=[1734, 1519, 1756, 1587, 1581] lost_sum=0 nav_lost_sum=0
+BD: n=5 dist=[8072, 8118, 8104, 8101, 8201] dist_avg=8119.2 yprog=[1616, 2189, 1803, 1966, 1946] avg_herr=[1546, 2113, 1599, 1857, 1928] max_herr=[2136, 2580, 2160, 2263, 2339] lost_sum=0 nav_lost_sum=0
+DA: n=5 dist=[7074, 6972, 7096, 6965, 6981] dist_avg=7017.6 yprog=[16102, 15482, 15939, 15016, 15735] avg_herr=[682, 365, 534, 264, 597] max_herr=[1807, 1648, 1749, 1477, 1900] lost_sum=0 nav_lost_sum=0
+
+TURN_START_STOP
+lap=0 seg=AC phase_dist=8414 yaw0=16741 yaw1=-15593 ydelta=3666 turn_dist=572
+lap=0 seg=CB phase_dist=7137 yaw0=844 yaw1=4793 ydelta=3949 turn_dist=576
+lap=0 seg=BD phase_dist=8072 yaw0=6003 yaw1=3407 ydelta=-2596 turn_dist=464
+lap=0 seg=DA phase_dist=7074 yaw0=-13722 yaw1=-16611 ydelta=-2889 turn_dist=458
+lap=1 seg=AC phase_dist=8013 yaw0=17081 yaw1=-15234 ydelta=3685 turn_dist=577
+lap=1 seg=CB phase_dist=7062 yaw0=750 yaw1=4186 ydelta=3436 turn_dist=539
+lap=1 seg=BD phase_dist=8118 yaw0=6319 yaw1=2914 ydelta=-3405 turn_dist=557
+lap=1 seg=DA phase_dist=6972 yaw0=-13413 yaw1=-16820 ydelta=-3407 turn_dist=511
+lap=2 seg=AC phase_dist=8024 yaw0=17163 yaw1=-15147 ydelta=3690 turn_dist=579
+lap=2 seg=CB phase_dist=6996 yaw0=869 yaw1=4915 ydelta=4046 turn_dist=579
+lap=2 seg=BD phase_dist=8104 yaw0=6434 yaw1=3323 ydelta=-3111 turn_dist=510
+lap=2 seg=DA phase_dist=7096 yaw0=-13465 yaw1=-16780 ydelta=-3315 turn_dist=510
+lap=3 seg=AC phase_dist=8033 yaw0=17169 yaw1=-14623 ydelta=4208 turn_dist=619
+lap=3 seg=CB phase_dist=7025 yaw0=1072 yaw1=4613 ydelta=3541 turn_dist=537
+lap=3 seg=BD phase_dist=8101 yaw0=6460 yaw1=2948 ydelta=-3512 turn_dist=550
+lap=3 seg=DA phase_dist=6965 yaw0=-13088 yaw1=-16599 ydelta=-3511 turn_dist=505
+lap=4 seg=AC phase_dist=8018 yaw0=17596 yaw1=-14893 ydelta=3511 turn_dist=537
+lap=4 seg=CB phase_dist=7050 yaw0=1116 yaw1=4821 ydelta=3705 turn_dist=533
+lap=4 seg=BD phase_dist=8201 yaw0=6612 yaw1=3512 ydelta=-3100 turn_dist=513
