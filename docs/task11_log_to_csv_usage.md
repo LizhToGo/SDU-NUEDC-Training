@@ -2,6 +2,8 @@
 
 本文说明如何使用 `tools/task11_log_to_csv.py` 将串口接收到的 Task11 日志整理成本地累计数据文件。
 
+> 注意：当前主分支默认 `TASK11_UART_LOG_ENABLE=0`、`TASK11_RAM_LOG_ENABLE=0`。如果需要采集完整 `TASK11_*` 数据，先在 `app_config.h` 中打开对应日志开关并重新编译烧录。
+
 ## 脚本用途
 
 `tools/task11_log_to_csv.py` 用于处理类似 VOFA+、串口助手或 Codex 附件中保存的 Task11 文本日志。
@@ -46,6 +48,20 @@ C:\Users\orang\Desktop\task11_run_001.txt
 | `task11_experience_segments.csv` | 每次运行的 `TASK11_SUM` 分段摘要，通常每 5 圈为 20 行。 |
 | `task11_experience_turns.csv` | 每次运行的转向事件摘要，记录转向前角度、转向后角度、转过角度、转向距离。 |
 | `task11_experience_summary.txt` | 人类可读的 summary 文本，会追加每次运行的校验和关键统计。 |
+
+这些文件属于本地经验数据导出物，当前 `.gitignore` 已加入 root 和 `data/` 下的 `task11_experience_*` 规则。若某些文件已经被 Git 跟踪，`.gitignore` 不会自动取消跟踪，需要另行决定是否用 `git rm --cached` 从仓库索引中移除。
+
+如果想把输出集中放到 `data/` 目录，推荐使用：
+
+```powershell
+& "C:\Users\orang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" tools\task11_log_to_csv.py "C:\Users\orang\Desktop\task11_run_001.txt" `
+  --output data\task11_experience_data.csv `
+  --runs-output data\task11_experience_runs.csv `
+  --segments-output data\task11_experience_segments.csv `
+  --turns-output data\task11_experience_turns.csv `
+  --summary data\task11_experience_summary.txt `
+  --strict
+```
 
 ## 重复导入保护
 
