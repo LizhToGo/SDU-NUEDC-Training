@@ -9,6 +9,7 @@
 #include "board.h"
 #include "bsp_encoder.h"
 #include "bsp_ir_tracking.h"
+#include "bsp_jy62.h"
 #include "bsp_tb6612.h"
 
 static inline uint8_t debug_uart_stop_requested(void)
@@ -33,31 +34,300 @@ static inline uint8_t debug_uart_stop_requested(void)
 }
 
 /* 主电机闭环调试。该函数会一直运行，并按设定周期打印 PID 数据。 */
+#if TASK5_RAM_LOG_ENABLE
+typedef struct {
+    uint32_t t_ms;
+    int16_t motor_b_delta;
+    int16_t motor_a_delta;
+    int16_t motor_b_total;
+    int16_t motor_a_total;
+    int16_t distance_count;
+    int16_t distance_error;
+    int16_t distance_correction;
+    int16_t motor_b_speed;
+    int16_t motor_a_speed;
+    int16_t speed_diff;
+    int16_t motor_b_avg;
+    int16_t motor_a_avg;
+    int16_t diff_avg;
+    int16_t pid_error;
+    int16_t p_term;
+    int16_t i_term;
+    int16_t d_term;
+    int16_t feedforward_correction;
+    int16_t feedback_correction;
+    int16_t correction;
+    int16_t motor_b_pwm;
+    int16_t motor_a_pwm;
+    int16_t yaw_cdeg;
+    int16_t yaw_progress_cdeg;
+    int16_t gyro_z_x100_mdps;
+    int16_t gzlp_x100_mdps;
+    int16_t roll_cdeg;
+    int16_t pitch_cdeg;
+    uint16_t nav_frame_delta;
+    uint8_t nav_ok;
+    uint8_t nav_update_flags;
+} task5_ram_log_t;
+
+extern task5_ram_log_t * const g_task5_ram_log;
+extern uint16_t g_task5_ram_log_count;
+extern uint16_t g_task5_ram_log_overflow;
+
+static inline int16_t task5_sat_i16(int32_t value)
+{
+    if (value > 32767L) {
+        return 32767;
+    }
+    if (value < -32768L) {
+        return -32768;
+    }
+    return (int16_t)value;
+}
+
+static inline uint16_t task5_sat_u16(uint32_t value)
+{
+    return (value > 65535UL) ? 65535U : (uint16_t)value;
+}
+
+static inline int32_t task5_normalize_cdeg(int32_t angle_cdeg)
+{
+    while (angle_cdeg > 18000L) {
+        angle_cdeg -= 36000L;
+    }
+    while (angle_cdeg < -18000L) {
+        angle_cdeg += 36000L;
+    }
+    return angle_cdeg;
+}
+
+static inline void task5_ram_log_reset(void)
+{
+    g_task5_ram_log_count = 0U;
+    g_task5_ram_log_overflow = 0U;
+}
+
+static inline void task5_ram_dump_line_pause(void)
+{
+#if TASK5_DUMP_LINE_DELAY_MS > 0
+    delay_ms(TASK5_DUMP_LINE_DELAY_MS);
+#endif
+}
+
+static inline void task5_ram_log_sample(uint32_t elapsed_ms,
+    int32_t motor_b_delta,
+    int32_t motor_a_delta,
+    int32_t motor_b_total,
+    int32_t motor_a_total,
+    const straight_drive_output_t *drive,
+    int32_t b_speed_avg,
+    int32_t a_speed_avg,
+    int32_t diff_avg,
+    uint8_t nav_ok,
+    const jy62_navigation_t *nav,
+    uint32_t nav_frame_delta,
+    int32_t yaw_start_cdeg)
+{
+    task5_ram_log_t *log;
+    int32_t yaw_cdeg = 0;
+    int32_t yaw_progress_cdeg = 0;
+    int32_t gyro_z_mdps = 0;
+    int32_t gzlp_mdps = 0;
+    int32_t roll_cdeg = 0;
+    int32_t pitch_cdeg = 0;
+    uint8_t update_flags = 0U;
+
+    if (g_task5_ram_log_count >= TASK5_RAM_LOG_CAPACITY) {
+        g_task5_ram_log_overflow++;
+        return;
+    }
+
+    if ((nav_ok != 0U) && (nav != 0)) {
+        yaw_cdeg = nav->yaw_relative_cdeg;
+        yaw_progress_cdeg = task5_normalize_cdeg(yaw_cdeg - yaw_start_cdeg);
+        gyro_z_mdps = nav->gyro_z_mdps;
+        gzlp_mdps = nav->gyro_z_filtered_mdps;
+        roll_cdeg = nav->roll_cdeg;
+        pitch_cdeg = nav->pitch_cdeg;
+        update_flags = nav->update_flags;
+    }
+
+    log = &g_task5_ram_log[g_task5_ram_log_count++];
+    log->t_ms = elapsed_ms;
+    log->motor_b_delta = task5_sat_i16(motor_b_delta);
+    log->motor_a_delta = task5_sat_i16(motor_a_delta);
+    log->motor_b_total = task5_sat_i16(motor_b_total);
+    log->motor_a_total = task5_sat_i16(motor_a_total);
+    log->distance_count = task5_sat_i16(drive->distance_count);
+    log->distance_error = task5_sat_i16(drive->distance_error);
+    log->distance_correction = task5_sat_i16(drive->distance_correction);
+    log->motor_b_speed = task5_sat_i16(drive->motor_b_speed);
+    log->motor_a_speed = task5_sat_i16(drive->motor_a_speed);
+    log->speed_diff = task5_sat_i16(drive->speed_diff);
+    log->motor_b_avg = task5_sat_i16(b_speed_avg);
+    log->motor_a_avg = task5_sat_i16(a_speed_avg);
+    log->diff_avg = task5_sat_i16(diff_avg);
+    log->pid_error = task5_sat_i16(drive->pid_error);
+    log->p_term = task5_sat_i16(drive->p_term);
+    log->i_term = task5_sat_i16(drive->i_term);
+    log->d_term = task5_sat_i16(drive->d_term);
+    log->feedforward_correction = task5_sat_i16(drive->feedforward_correction);
+    log->feedback_correction = task5_sat_i16(drive->feedback_correction);
+    log->correction = task5_sat_i16(drive->correction);
+    log->motor_b_pwm = task5_sat_i16(drive->motor_b_pwm);
+    log->motor_a_pwm = task5_sat_i16(drive->motor_a_pwm);
+    log->yaw_cdeg = task5_sat_i16(yaw_cdeg);
+    log->yaw_progress_cdeg = task5_sat_i16(yaw_progress_cdeg);
+    log->gyro_z_x100_mdps = task5_sat_i16(gyro_z_mdps / 100);
+    log->gzlp_x100_mdps = task5_sat_i16(gzlp_mdps / 100);
+    log->roll_cdeg = task5_sat_i16(roll_cdeg);
+    log->pitch_cdeg = task5_sat_i16(pitch_cdeg);
+    log->nav_frame_delta = task5_sat_u16(nav_frame_delta);
+    log->nav_ok = nav_ok;
+    log->nav_update_flags = update_flags;
+}
+
+static inline void task5_ram_log_dump(const straight_drive_config_t *config,
+    int32_t feedforward_correction,
+    uint8_t nav_start_ok,
+    int32_t yaw_start_cdeg,
+    int32_t motor_b_total,
+    int32_t motor_a_total,
+    int32_t distance_count)
+{
+    uint16_t i;
+    uint32_t seq = 0U;
+    uint16_t count = g_task5_ram_log_count;
+    uint16_t overflow = g_task5_ram_log_overflow;
+
+    if (count > TASK5_RAM_LOG_CAPACITY) {
+        overflow++;
+        count = TASK5_RAM_LOG_CAPACITY;
+    }
+
+    lc_printf("TASK5_RAM_BEGIN seq=%lu n=%u/%u ov=%u period=%ums final_B=%ld final_A=%ld final_dist=%ld final_d_err=%ld\r\n",
+        (unsigned long)seq++,
+        count,
+        TASK5_RAM_LOG_CAPACITY,
+        overflow,
+        TASK5_RAM_LOG_PERIOD_MS,
+        motor_b_total,
+        motor_a_total,
+        distance_count,
+        motor_b_total - motor_a_total);
+    task5_ram_dump_line_pause();
+
+    lc_printf("TASK5_CFG seq=%lu B_base=%ld A_base=%ld target_diff=%ld ff_gain=%ld ff_corr=%ld d_div=%ld d_max=%ld i_limit=%d corr_max=%ld period=%dms yaw0=%ld nav0=%u\r\n",
+        (unsigned long)seq++,
+        config->base_b_pwm,
+        config->base_a_pwm,
+        config->target_speed_diff,
+        config->diff_ff_gain,
+        feedforward_correction,
+        config->distance_corr_divisor,
+        config->distance_corr_max,
+        PID_TEST_I_LIMIT,
+        config->correction_max,
+        CONTROL_PERIOD_MS,
+        yaw_start_cdeg,
+        nav_start_ok);
+    task5_ram_dump_line_pause();
+
+    lc_printf("TASK5_DUMP_SECTION seq=%lu name=PID count=%u\r\n",
+        (unsigned long)seq++,
+        count);
+    task5_ram_dump_line_pause();
+
+    for (i = 0U; i < count; i++) {
+        const task5_ram_log_t *log = &g_task5_ram_log[i];
+        lc_printf("TASK5_PID seq=%lu idx=%u t=%lu B_cnt=%d A_cnt=%d B_total=%d A_total=%d dist_count=%d d_err=%d d_corr=%d B_spd=%d A_spd=%d diff=%d B_avg=%d A_avg=%d diff_avg=%d target_diff=%ld err=%d P=%d I=%d D=%d ff=%d fb=%d corr=%d B_pwm=%d A_pwm=%d nav=%u yaw=%d yprog=%d gz=%d gzlp=%d roll=%d pitch=%d nav_fd=%u upd=0x%02X\r\n",
+            (unsigned long)seq++,
+            i,
+            log->t_ms,
+            log->motor_b_delta,
+            log->motor_a_delta,
+            log->motor_b_total,
+            log->motor_a_total,
+            log->distance_count,
+            log->distance_error,
+            log->distance_correction,
+            log->motor_b_speed,
+            log->motor_a_speed,
+            log->speed_diff,
+            log->motor_b_avg,
+            log->motor_a_avg,
+            log->diff_avg,
+            config->target_speed_diff,
+            log->pid_error,
+            log->p_term,
+            log->i_term,
+            log->d_term,
+            log->feedforward_correction,
+            log->feedback_correction,
+            log->correction,
+            log->motor_b_pwm,
+            log->motor_a_pwm,
+            log->nav_ok,
+            log->yaw_cdeg,
+            log->yaw_progress_cdeg,
+            log->gyro_z_x100_mdps,
+            log->gzlp_x100_mdps,
+            log->roll_cdeg,
+            log->pitch_cdeg,
+            log->nav_frame_delta,
+            log->nav_update_flags);
+        task5_ram_dump_line_pause();
+    }
+
+    lc_printf("TASK5_DUMP_SECTION_END seq=%lu name=PID\r\n",
+        (unsigned long)seq++);
+    task5_ram_dump_line_pause();
+    lc_printf("TASK5_RAM_END seq=%lu\r\n", (unsigned long)seq++);
+}
+#else
+#define task5_ram_log_reset() ((void)0)
+#define task5_ram_log_sample(elapsed_ms, motor_b_delta, motor_a_delta, motor_b_total, motor_a_total, drive, b_speed_avg, a_speed_avg, diff_avg, nav_ok, nav, nav_frame_delta, yaw_start_cdeg) ((void)0)
+#define task5_ram_log_dump(config, feedforward_correction, nav_start_ok, yaw_start_cdeg, motor_b_total, motor_a_total, distance_count) ((void)0)
+#endif
+
 static inline void run_motor_pid_stream(void)
 {
     straight_pid_t pid;
     straight_drive_config_t drive_config;
     straight_drive_output_t drive;
     uint32_t elapsed_ms = 0;
-    uint32_t report_elapsed_ms = 0;
-    int32_t report_b_speed_sum = 0;
-    int32_t report_a_speed_sum = 0;
-    uint32_t report_sample_count = 0;
+    uint32_t log_elapsed_ms = 0;
+    int32_t log_b_speed_sum = 0;
+    int32_t log_a_speed_sum = 0;
+    uint32_t log_sample_count = 0;
     int32_t motor_b_delta;
     int32_t motor_a_delta;
     int32_t motor_b_total;
     int32_t motor_a_total;
     int32_t distance_count;
     int32_t feedforward_correction;
+    jy62_navigation_t nav = {0};
+    jy62_navigation_t nav_start = {0};
+    uint32_t nav_frame_delta = 0U;
+    uint8_t nav_ok = 0U;
+    uint8_t nav_start_ok = 0U;
+    int32_t yaw_start_cdeg = 0;
 
     straight_drive_config_pid_test(&drive_config);
     straight_pid_reset(&pid);
     straight_pid_set_limits(&pid, PID_TEST_I_LIMIT, PID_TEST_CORR_MAX);
     feedforward_correction = straight_drive_feedforward(&drive_config);
+    task5_ram_log_reset();
+#if ENABLE_JY62_NAV
+    nav_start_ok = JY62_PeekNavigation(&nav_start);
+    if (nav_start_ok != 0U) {
+        yaw_start_cdeg = nav_start.yaw_relative_cdeg;
+    }
+#endif
 
     /* 每次进入 05 模式都从 0 开始累计，方便标定 COUNTS_PER_CM。 */
     encoder_reset_distance_counts();
-    lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld d_div=%d d_max=%d i_limit=%d corr_max=%d period=%dms report=%dms\r\n",
+    lc_printf("PID motor stream start: B_base=%d A_base=%d target_diff=%d ff_gain=%d ff_corr=%ld d_div=%d d_max=%d i_limit=%d corr_max=%d period=%dms ram_period=%dms ram_cap=%u yaw0=%ld nav0=%u\r\n",
         drive_config.base_b_pwm,
         drive_config.base_a_pwm,
         drive_config.target_speed_diff,
@@ -68,7 +338,10 @@ static inline void run_motor_pid_stream(void)
         PID_TEST_I_LIMIT,
         drive_config.correction_max,
         CONTROL_PERIOD_MS,
-        PID_REPORT_PERIOD_MS);
+        TASK5_RAM_LOG_PERIOD_MS,
+        TASK5_RAM_LOG_CAPACITY,
+        yaw_start_cdeg,
+        nav_start_ok);
     encoder_enable_interrupts();
     lc_printf("PID encoder IRQ enabled, B=PA14/PA15 A=PA16/PA17\r\n");
     TB6612_SetDifferential((int16_t)drive_config.base_b_pwm,
@@ -77,7 +350,7 @@ static inline void run_motor_pid_stream(void)
     while (1) {
         delay_ms(CONTROL_PERIOD_MS);
         elapsed_ms += CONTROL_PERIOD_MS;
-        report_elapsed_ms += CONTROL_PERIOD_MS;
+        log_elapsed_ms += CONTROL_PERIOD_MS;
 
         if (debug_uart_stop_requested() != 0U) {
             TB6612_Brake();
@@ -88,10 +361,25 @@ static inline void run_motor_pid_stream(void)
                 motor_a_total,
                 distance_count,
                 motor_b_total - motor_a_total);
+            task5_ram_log_dump(&drive_config,
+                feedforward_correction,
+                nav_start_ok,
+                yaw_start_cdeg,
+                motor_b_total,
+                motor_a_total,
+                distance_count);
             return;
         }
 
         /* 用 20 ms 时间窗口内的编码器增量作为简化速度估计。 */
+#if ENABLE_JY62_NAV
+        nav_frame_delta = JY62_GetNavigation(&nav);
+        nav_ok = nav.valid;
+#else
+        nav_frame_delta = 0U;
+        nav_ok = 0U;
+#endif
+
         encoder_get_delta_counts(&motor_b_delta, &motor_a_delta);
         encoder_get_total_counts(&motor_b_total, &motor_a_total);
         straight_drive_update(&pid,
@@ -101,44 +389,38 @@ static inline void run_motor_pid_stream(void)
             motor_b_total,
             motor_a_total,
             &drive);
-        report_b_speed_sum += drive.motor_b_speed;
-        report_a_speed_sum += drive.motor_a_speed;
-        report_sample_count++;
+        log_b_speed_sum += drive.motor_b_speed;
+        log_a_speed_sum += drive.motor_a_speed;
+        log_sample_count++;
 
         /* TB6612_SetDifferential(left, right)：左轮对应 B 电机，右轮对应 A 电机。 */
         TB6612_SetDifferential((int16_t)drive.motor_b_pwm,
             (int16_t)drive.motor_a_pwm);
 
-        if (report_elapsed_ms >= PID_REPORT_PERIOD_MS) {
-            int32_t b_speed_avg = (report_sample_count != 0U) ?
-                (report_b_speed_sum / (int32_t)report_sample_count) : drive.motor_b_speed;
-            int32_t a_speed_avg = (report_sample_count != 0U) ?
-                (report_a_speed_sum / (int32_t)report_sample_count) : drive.motor_a_speed;
+        if (log_elapsed_ms >= TASK5_RAM_LOG_PERIOD_MS) {
+            int32_t b_speed_avg = (log_sample_count != 0U) ?
+                (log_b_speed_sum / (int32_t)log_sample_count) : drive.motor_b_speed;
+            int32_t a_speed_avg = (log_sample_count != 0U) ?
+                (log_a_speed_sum / (int32_t)log_sample_count) : drive.motor_a_speed;
             int32_t diff_avg = b_speed_avg - a_speed_avg;
 
-            report_elapsed_ms = 0;
-            report_b_speed_sum = 0;
-            report_a_speed_sum = 0;
-            report_sample_count = 0;
-            lc_printf("PID t=%lu B_cnt=%ld A_cnt=%ld B_total=%ld A_total=%ld dist_count=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld diff=%ld B_avg=%ld A_avg=%ld diff_avg=%ld target_diff=%d err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
-                elapsed_ms,
-                motor_b_delta, motor_a_delta,
+            task5_ram_log_sample(elapsed_ms,
+                motor_b_delta,
+                motor_a_delta,
                 motor_b_total,
                 motor_a_total,
-                drive.distance_count,
-                drive.distance_error,
-                drive.distance_correction,
-                drive.motor_b_speed, drive.motor_a_speed,
-                drive.speed_diff,
+                &drive,
                 b_speed_avg,
                 a_speed_avg,
                 diff_avg,
-                drive_config.target_speed_diff,
-                drive.pid_error, drive.p_term, drive.i_term, drive.d_term,
-                drive.feedforward_correction,
-                drive.feedback_correction,
-                drive.correction,
-                drive.motor_b_pwm, drive.motor_a_pwm);
+                nav_ok,
+                &nav,
+                nav_frame_delta,
+                yaw_start_cdeg);
+            log_elapsed_ms = 0;
+            log_b_speed_sum = 0;
+            log_a_speed_sum = 0;
+            log_sample_count = 0;
         }
     }
 }

@@ -5,12 +5,16 @@
 #define CONTROL_PERIOD_MS (20)
 
 /* 当前接线：左轮是 B 电机，右轮是 A 电机。 */
-#define STRAIGHT_B_BASE_PWM (627)
-#define STRAIGHT_A_BASE_PWM (630)
+#define STRAIGHT_B_BASE_PWM (626)
+#define STRAIGHT_A_BASE_PWM (631)
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (870)
 
 #define PID_REPORT_PERIOD_MS (100)
+#define TASK5_RAM_LOG_ENABLE       (1)
+#define TASK5_RAM_LOG_CAPACITY     (384)
+#define TASK5_RAM_LOG_PERIOD_MS    (40)
+#define TASK5_DUMP_LINE_DELAY_MS   (100)
 
 /* 功能开关。 */
 #define ENABLE_IR_TRACKING_UART_TEST (0)
@@ -138,7 +142,7 @@
 #define PID_TEST_I_LIMIT           (600)
 #define PID_TEST_CORR_MAX          (180)
 #define PID_TEST_DIFF_FF_GAIN      (3)
-#define PID_TEST_DISTANCE_CORR_DIVISOR (12)
+#define PID_TEST_DISTANCE_CORR_DIVISOR (9)
 #define PID_TEST_DISTANCE_CORR_MAX     (45)
 
 /* 07 差速 PD 调参模式：只看 B_spd - A_spd 的 P/D 响应，累计距离差只打印不参与修正。 */

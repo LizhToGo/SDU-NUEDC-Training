@@ -2495,9 +2495,32 @@ typedef struct {
     uint8_t nav_update_flags;
 } task11_segment_accum_t;
 
-static task11_window_log_t g_task11_window_log[TASK11_RAM_WINDOW_CAPACITY];
-static task11_event_log_t g_task11_event_log[TASK11_RAM_EVENT_CAPACITY];
-static task11_summary_log_t g_task11_summary_log[TASK11_RAM_SUMMARY_CAPACITY];
+typedef struct {
+    task11_window_log_t window_log[TASK11_RAM_WINDOW_CAPACITY];
+    task11_event_log_t event_log[TASK11_RAM_EVENT_CAPACITY];
+    task11_summary_log_t summary_log[TASK11_RAM_SUMMARY_CAPACITY];
+} task11_ram_storage_t;
+
+#if TASK5_RAM_LOG_ENABLE
+typedef union {
+    task11_ram_storage_t task11;
+    task5_ram_log_t task5[TASK5_RAM_LOG_CAPACITY];
+} task_ram_log_storage_t;
+
+static task_ram_log_storage_t g_task_ram_log_storage;
+#define g_task11_window_log (g_task_ram_log_storage.task11.window_log)
+#define g_task11_event_log (g_task_ram_log_storage.task11.event_log)
+#define g_task11_summary_log (g_task_ram_log_storage.task11.summary_log)
+task5_ram_log_t * const g_task5_ram_log = g_task_ram_log_storage.task5;
+uint16_t g_task5_ram_log_count;
+uint16_t g_task5_ram_log_overflow;
+#else
+static task11_ram_storage_t g_task11_ram_storage;
+#define g_task11_window_log (g_task11_ram_storage.window_log)
+#define g_task11_event_log (g_task11_ram_storage.event_log)
+#define g_task11_summary_log (g_task11_ram_storage.summary_log)
+#endif
+
 static task11_segment_accum_t g_task11_segment_accum;
 static uint16_t g_task11_window_log_count;
 static uint16_t g_task11_event_log_count;
@@ -3079,6 +3102,13 @@ static void task11_ram_log_dump(void)
 #define task11_ram_log_window_sample(lap, phase, ir_ok, sample, edge_seen, elapsed_ms, phase_distance_count, yaw_cdeg, yaw_raw_cdeg, phase_yaw_cdeg, yaw_progress_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, control_turn, gyro_z_mdps, gzlp_mdps, roll_cdeg, pitch_cdeg, nav_frame_delta, nav_update_flags) ((void)0)
 #define task11_ram_log_event(event, reason, lap, phase, elapsed_ms, distance_count, phase_distance_count, yaw_cdeg, yaw_progress_cdeg, yaw_delta_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, gzlp_mdps, ir_ok, sample, motor_b_total, motor_a_total) ((void)0)
 #define task11_ram_log_dump() ((void)0)
+#endif
+
+#if TASK5_RAM_LOG_ENABLE && !TASK11_RAM_LOG_ENABLE
+static task5_ram_log_t g_task5_ram_log_storage[TASK5_RAM_LOG_CAPACITY];
+task5_ram_log_t * const g_task5_ram_log = g_task5_ram_log_storage;
+uint16_t g_task5_ram_log_count;
+uint16_t g_task5_ram_log_overflow;
 #endif
 
 static uint8_t task11_peek_yaw(int32_t *yaw_cdeg, int32_t *gzlp_mdps)
