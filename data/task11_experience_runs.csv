@@ -1,3 +1,4 @@
 ﻿run_id,imported_at,source_file,source_name,source_mtime,log_hash,validation_ok,records,seq_count,seq_first,seq_last,evt_count,sum_count,win_count,win_ov,ev_ov,sum_ov,complete_lap,complete_phase,complete_t,complete_reason,line_base,arc_base,ff_gain,gyro_st,arc_yaw
-task11_b44ec44570f2,2026-06-06T21:57:49,C:\Users\orang\Desktop\run02.txt,run02.txt,2026-06-06T21:54:21,b44ec44570f2,1,744,744,0,743,98,20,617,0,0,0,5,3,29300,point,560,540,2,0,0
-task11_bf7ca7f99555,2026-06-06T22:05:22,C:\Users\orang\Desktop\run03.txt,run03.txt,2026-06-06T22:05:10,bf7ca7f99555,1,739,739,0,738,98,20,612,0,0,0,5,3,29400,point,560,540,2,0,0
+task11_72ed1b5ebe46,2026-06-06T23:04:25,C:\Users\orang\Desktop\run02.txt,run02.txt,2026-06-06T22:53:10,72ed1b5ebe46,1,743,743,0,742,98,20,616,0,0,0,5,3,29220,point,560,540,2,0,0
+task11_fb0c963cde9c,2026-06-06T23:04:30,C:\Users\orang\Desktop\run03.txt,run03.txt,2026-06-06T22:58:13,fb0c963cde9c,1,740,740,0,739,98,20,613,0,0,0,5,3,29240,point,560,540,2,0,0
+task11_25f524e5e21b,2026-06-06T23:04:34,C:\Users\orang\Desktop\run01.txt,run01.txt,2026-06-06T23:04:00,25f524e5e21b,1,743,743,0,742,98,20,616,0,0,0,5,3,29360,point,560,540,2,0,0

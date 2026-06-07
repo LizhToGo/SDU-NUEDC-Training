@@ -53,6 +53,13 @@ PREFERRED_COLUMNS = [
     "ydelta",
     "exp",
     "herr",
+    "line_turn",
+    "nav_turn",
+    "turn",
+    "tdiff",
+    "ff",
+    "fb",
+    "corr",
     "end_herr",
     "avg_herr",
     "max_herr",
@@ -60,6 +67,8 @@ PREFERRED_COLUMNS = [
     "max_gz",
     "avg_gzlp",
     "max_gzlp",
+    "avg_line",
+    "avg_nav",
     "gz",
     "gz100",
     "gzlp",
@@ -97,12 +106,20 @@ PREFERRED_COLUMNS = [
     "h_div",
     "h_max",
     "h_gd",
+    "ac_tgt",
+    "bd_tgt",
     "arc_yaw",
     "arc_div",
     "arc_max",
     "arc_gd",
+    "arc_yaw_arm",
     "turn_slow",
     "turn_slow_yaw",
+    "yaw_stop",
+    "yaw_tol",
+    "yaw_gz",
+    "b_exit",
+    "a_exit",
     "ff_gain",
 ]
 
@@ -133,6 +150,14 @@ RUN_COLUMNS = [
     "ff_gain",
     "gyro_st",
     "arc_yaw",
+    "arc_yaw_arm",
+    "ac_tgt",
+    "bd_tgt",
+    "yaw_stop",
+    "yaw_tol",
+    "yaw_gz",
+    "b_exit",
+    "a_exit",
 ]
 
 TURN_COLUMNS = [
@@ -149,6 +174,9 @@ TURN_COLUMNS = [
     "yaw_before",
     "yaw_after",
     "yaw_delta",
+    "yaw_target",
+    "yaw_error_after",
+    "yaw_stop_enabled",
     "turn_dist",
     "stop_reason",
     "stop_mask",
@@ -328,12 +356,16 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
         yprog = [int_value(row, "yprog") for row in seg_rows]
         avg_herr = [int_value(row, "avg_herr") for row in seg_rows]
         max_herr = [int_value(row, "max_herr") for row in seg_rows]
+        avg_nav = [int_value(row, "avg_nav") for row in seg_rows]
+        avg_line = [int_value(row, "avg_line") for row in seg_rows]
+        avg_turn = [int_value(row, "avg_turn") for row in seg_rows]
         lost_sum = sum(int_value(row, "lost") for row in seg_rows)
         nav_lost_sum = sum(int_value(row, "nav_lost") for row in seg_rows)
         dist_avg = statistics.mean(dists) if dists else 0.0
         lines.append(
             f"{seg}: n={len(seg_rows)} dist={dists} dist_avg={dist_avg:.1f} "
             f"yprog={yprog} avg_herr={avg_herr} max_herr={max_herr} "
+            f"avg_line={avg_line} avg_nav={avg_nav} avg_turn={avg_turn} "
             f"lost_sum={lost_sum} nav_lost_sum={nav_lost_sum}"
         )
 
@@ -346,11 +378,15 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
     }
     for start in [row for row in event_rows if row.get("event") == "turn_start"]:
         stop = turn_stops.get((start.get("lap"), start.get("seg")), {})
+        yaw_target = stop.get("exp", start.get("exp", ""))
+        yaw_stop_enabled = int(int_value({"target": yaw_target}, "target") != 0)
         lines.append(
             f"lap={start.get('lap')} seg={start.get('seg')} "
             f"phase_dist={start.get('phase_dist')} yaw0={start.get('yaw')} "
             f"yaw1={stop.get('yaw', '')} ydelta={stop.get('ydelta', '')} "
-            f"turn_dist={stop.get('dist', '')}"
+            f"target={yaw_target} yerr={stop.get('herr', '')} "
+            f"yaw_stop={yaw_stop_enabled} "
+            f"reason={stop.get('reason', '')} turn_dist={stop.get('dist', '')}"
         )
 
     return lines, ok
@@ -491,6 +527,14 @@ def build_run_summary_row(
         "ff_gain": cfg_row.get("ff_gain", ""),
         "gyro_st": cfg_row.get("gyro_st", ""),
         "arc_yaw": cfg_row.get("arc_yaw", ""),
+        "arc_yaw_arm": cfg_row.get("arc_yaw_arm", ""),
+        "ac_tgt": cfg_row.get("ac_tgt", ""),
+        "bd_tgt": cfg_row.get("bd_tgt", ""),
+        "yaw_stop": cfg_row.get("yaw_stop", ""),
+        "yaw_tol": cfg_row.get("yaw_tol", ""),
+        "yaw_gz": cfg_row.get("yaw_gz", ""),
+        "b_exit": cfg_row.get("b_exit", ""),
+        "a_exit": cfg_row.get("a_exit", ""),
     }
     return row
 
@@ -505,6 +549,7 @@ def build_turn_rows(rows: list[dict[str, str]], metadata: dict[str, str]) -> lis
     turn_rows: list[dict[str, str]] = []
     for start in [row for row in events if row.get("event") == "turn_start"]:
         stop = turn_stops.get((start.get("lap"), start.get("seg")), {})
+        yaw_target = stop.get("exp", start.get("exp", ""))
         turn_rows.append(
             {
                 **metadata,
@@ -517,6 +562,9 @@ def build_turn_rows(rows: list[dict[str, str]], metadata: dict[str, str]) -> lis
                 "yaw_before": start.get("yaw", ""),
                 "yaw_after": stop.get("yaw", ""),
                 "yaw_delta": stop.get("ydelta", ""),
+                "yaw_target": yaw_target,
+                "yaw_error_after": stop.get("herr", ""),
+                "yaw_stop_enabled": str(int(int_value({"target": yaw_target}, "target") != 0)),
                 "turn_dist": stop.get("dist", ""),
                 "stop_reason": stop.get("reason", ""),
                 "stop_mask": stop.get("mask", ""),

@@ -133,8 +133,23 @@ complete: lap=5 ... reason=point
 | `yaw_start` / `yaw_end` | 当前段开始和结束相对航向角。 |
 | `yprog` | 当前段相对转过角度。 |
 | `avg_herr` / `max_herr` | 航向误差统计。 |
+| `avg_line` | 循迹 PD 在这一段平均给出的转向量。 |
+| `avg_nav` | 陀螺仪导航在这一段平均给出的介入转向量。 |
+| `avg_turn` | 最终叠加到左右轮 PWM 上的平均转向量。 |
 | `nav_lost` | 导航数据丢失计数。 |
 | `lost` | 循迹丢线计数。 |
+
+### `task11_experience_data.csv`
+
+细粒度原始记录中重点看：
+
+| 字段 | 含义 |
+| --- | --- |
+| `exp` | 当前控制周期或事件对应的期望航向角。AC/BD 为直线目标角，CB/DA 为弧线模型期望角。 |
+| `herr` | 实际航向角相对 `exp` 的误差。 |
+| `nav_turn` | 陀螺仪导航根据 `herr` 和角速度阻尼给出的转向介入量。 |
+| `turn` | 最终控制转向量。直线启用陀螺仪时主要来自 `nav_turn`，弧线为循迹与导航叠加。 |
+| `gz` / `gzlp` | 原始和滤波后的 Z 轴角速度，用来判断转向是否还在快速旋转。 |
 
 ### `task11_experience_turns.csv`
 
@@ -146,6 +161,9 @@ complete: lap=5 ... reason=point
 | `yaw_before` | 快速转向开始前航向角。 |
 | `yaw_after` | 快速转向停止后航向角。 |
 | `yaw_delta` | 快速转向实际转过角度。 |
+| `yaw_target` | B/A 出弧转向使用的目标航向角；C/D 进弧转向暂为 0。 |
+| `yaw_error_after` | 转向停止后相对 `yaw_target` 的误差。 |
+| `yaw_stop_enabled` | 该次快速转向是否配置了陀螺仪目标角停止。 |
 | `turn_dist` | 快速转向期间编码器距离。 |
 | `stop_reason` | 转向停止原因。 |
 | `stop_mask` | 停止时循迹传感器 mask。 |
@@ -165,4 +183,3 @@ complete: lap=5 ... reason=point
 ### 能不能只生成 summary，不写 CSV？
 
 当前脚本设计目标是积累数据，因此默认会写 CSV。若只想看校验结果，可以把输出路径指定到临时目录。
-
