@@ -6,6 +6,8 @@
 #include "board.h"
 #include "ti/driverlib/m0p/dl_core.h"
 
+static char g_uart_printf_buffer[512];
+
 /*
  * 当前 Board 模块主要负责三件事：
  * 1. 将 printf/lc_printf 的输出发送到 UART0；
@@ -55,16 +57,21 @@ int LOG_Debug_Out(const char* __file, const char* __func, int __line, const char
     sprintf(log_buff, "[%s Func:%s Line:%d] ",__file,__func,__line);
 
     /* 创建缓冲区保存完整日志内容。 */
-    char buffer[512] = {0};
-    strcpy(buffer, log_buff);
-    int len = vsnprintf(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer), format, args);
+    memset(g_uart_printf_buffer, 0, sizeof(g_uart_printf_buffer));
+    strcpy(g_uart_printf_buffer, log_buff);
+    int len = vsnprintf(g_uart_printf_buffer + strlen(g_uart_printf_buffer),
+        sizeof(g_uart_printf_buffer) - strlen(g_uart_printf_buffer),
+        format,
+        args);
 
     va_end(args);
 
     /* LOG_D 自动补一组换行，普通 lc_printf 不会自动补。 */
     char temp_buff[] = "\r\n";
-    strcat(buffer, temp_buff);
-    uart0_sendString(buffer);
+    strncat(g_uart_printf_buffer,
+        temp_buff,
+        sizeof(g_uart_printf_buffer) - strlen(g_uart_printf_buffer) - 1U);
+    uart0_sendString(g_uart_printf_buffer);
 
     return len;
 }
@@ -77,13 +84,13 @@ int lc_printf(char* format,...)
     va_start(args, format);
 
     /* 创建缓冲区保存格式化后的字符串，一次打印不要超过 512 字节。 */
-    char buffer[512] = {0};
-    int len = vsnprintf(buffer, sizeof(buffer), format, args);
+    memset(g_uart_printf_buffer, 0, sizeof(g_uart_printf_buffer));
+    int len = vsnprintf(g_uart_printf_buffer, sizeof(g_uart_printf_buffer), format, args);
 
     va_end(args);
 
     /* 通过 UART0 阻塞发送格式化后的字符串。 */
-    uart0_sendString(buffer);
+    uart0_sendString(g_uart_printf_buffer);
 
     return len;
 }
