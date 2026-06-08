@@ -3916,8 +3916,17 @@ enum {
     TASK11_RAM_EVENT_ADVANCE_STOP = 5,
     TASK11_RAM_EVENT_TURN_START = 6,
     TASK11_RAM_EVENT_TURN_STOP = 7,
-    TASK11_RAM_EVENT_COMPLETE = 8
+    TASK11_RAM_EVENT_COMPLETE = 8,
+    TASK11_RAM_EVENT_SEGMENT_START = 9
 };
+
+#define TASK11_LOG_FLAG_IR_OK            (0x01U)
+#define TASK11_LOG_FLAG_LINE_LOST        (0x02U)
+#define TASK11_LOG_FLAG_EDGE_SEEN        (0x04U)
+#define TASK11_LOG_FLAG_NAV_FRAME        (0x08U)
+#define TASK11_LOG_FLAG_GUIDE_SEEN       (0x10U)
+#define TASK11_LOG_FLAG_START_WINDOW     (0x20U)
+#define TASK11_LOG_FLAG_ARC_MODE         (0x40U)
 
 #if TASK11_RAM_LOG_ENABLE
 typedef struct {
@@ -3929,6 +3938,7 @@ typedef struct {
     int16_t yaw_progress_cdeg;
     int16_t expected_yaw_cdeg;
     int16_t heading_error_cdeg;
+    int16_t line_error;
     int16_t nav_turn;
     int16_t control_turn;
     int16_t gyro_z_x100_mdps;
@@ -3938,6 +3948,7 @@ typedef struct {
     uint8_t lap;
     uint8_t phase;
     uint8_t line_mask;
+    uint8_t active_count;
     uint8_t flags;
     uint8_t nav_update_flags;
     uint8_t nav_frame_delta;
@@ -3976,7 +3987,14 @@ typedef struct {
     uint16_t nav_lost_count;
     uint16_t nav_frame_count;
     uint16_t nav_stale_count;
+    uint16_t line_seen_count;
+    uint16_t first_line_dist_count;
+    uint16_t last_line_dist_count;
+    uint16_t line_span_count;
+    uint16_t end_gap_count;
     uint16_t lost_count;
+    uint16_t max_lost_streak_count;
+    uint16_t end_lost_streak_count;
     uint16_t max_abs_error;
     uint16_t max_abs_heading_error;
     uint16_t max_abs_gyro_z_x100_mdps;
@@ -3996,6 +4014,7 @@ typedef struct {
     uint8_t phase;
     uint8_t reason;
     uint8_t point_mask;
+    uint8_t point_flags;
     uint8_t nav_update_flags;
 } task11_summary_log_t;
 
@@ -4006,7 +4025,12 @@ typedef struct {
     uint32_t nav_lost_count;
     uint32_t nav_frame_count;
     uint32_t nav_stale_count;
+    uint32_t line_seen_count;
+    int32_t first_line_dist_count;
+    int32_t last_line_dist_count;
     uint32_t lost_count;
+    uint32_t current_lost_streak_count;
+    uint32_t max_lost_streak_count;
     int32_t yaw_start_cdeg;
     int32_t sum_abs_error;
     int32_t max_abs_error;
@@ -4126,6 +4150,9 @@ static const char *task11_ram_event_name(uint8_t event)
     if (event == TASK11_RAM_EVENT_COMPLETE) {
         return "complete";
     }
+    if (event == TASK11_RAM_EVENT_SEGMENT_START) {
+        return "segment_start";
+    }
     return "unknown";
 }
 
@@ -4159,7 +4186,12 @@ static void task11_ram_log_segment_reset(uint8_t lap,
     g_task11_segment_accum.nav_lost_count = 0U;
     g_task11_segment_accum.nav_frame_count = 0U;
     g_task11_segment_accum.nav_stale_count = 0U;
+    g_task11_segment_accum.line_seen_count = 0U;
+    g_task11_segment_accum.first_line_dist_count = -1;
+    g_task11_segment_accum.last_line_dist_count = -1;
     g_task11_segment_accum.lost_count = 0U;
+    g_task11_segment_accum.current_lost_streak_count = 0U;
+    g_task11_segment_accum.max_lost_streak_count = 0U;
     g_task11_segment_accum.yaw_start_cdeg = yaw_start_cdeg;
     g_task11_segment_accum.sum_abs_error = 0;
     g_task11_segment_accum.max_abs_error = 0;
@@ -4181,6 +4213,7 @@ static void task11_ram_log_segment_reset(uint8_t lap,
 static void task11_ram_log_segment_sample(uint8_t ir_ok,
     uint8_t nav_ok,
     const ir_tracking_sample_t *sample,
+    int32_t phase_distance_count,
     int32_t line_turn,
     int32_t nav_turn,
     int32_t control_turn,
@@ -4223,8 +4256,20 @@ static void task11_ram_log_segment_sample(uint8_t ir_ok,
     }
     if ((ir_ok == 0U) || (sample->line_lost != 0U)) {
         g_task11_segment_accum.lost_count++;
+        g_task11_segment_accum.current_lost_streak_count++;
+        if (g_task11_segment_accum.current_lost_streak_count >
+            g_task11_segment_accum.max_lost_streak_count) {
+            g_task11_segment_accum.max_lost_streak_count =
+                g_task11_segment_accum.current_lost_streak_count;
+        }
     } else {
         abs_error = abs_i32(sample->error);
+        if (g_task11_segment_accum.first_line_dist_count < 0) {
+            g_task11_segment_accum.first_line_dist_count = phase_distance_count;
+        }
+        g_task11_segment_accum.last_line_dist_count = phase_distance_count;
+        g_task11_segment_accum.line_seen_count++;
+        g_task11_segment_accum.current_lost_streak_count = 0U;
         g_task11_segment_accum.sum_abs_error += abs_error;
         if (abs_error > g_task11_segment_accum.max_abs_error) {
             g_task11_segment_accum.max_abs_error = abs_error;
@@ -4242,11 +4287,14 @@ static void task11_ram_log_segment_finish(uint8_t reason,
     int32_t yaw_progress_cdeg,
     int32_t heading_error_cdeg,
     uint8_t ir_ok,
-    const ir_tracking_sample_t *sample)
+    const ir_tracking_sample_t *sample,
+    uint8_t point_flags)
 {
     task11_summary_log_t *log;
     int32_t sample_count = (int32_t)g_task11_segment_accum.sample_count;
     int32_t nav_sample_count = (int32_t)g_task11_segment_accum.nav_sample_count;
+    int32_t first_line_dist_count = g_task11_segment_accum.first_line_dist_count;
+    int32_t last_line_dist_count = g_task11_segment_accum.last_line_dist_count;
 
     if (sample_count <= 0) {
         return;
@@ -4268,7 +4316,18 @@ static void task11_ram_log_segment_finish(uint8_t reason,
     log->nav_lost_count = task11_sat_u16((int32_t)g_task11_segment_accum.nav_lost_count);
     log->nav_frame_count = task11_sat_u16((int32_t)g_task11_segment_accum.nav_frame_count);
     log->nav_stale_count = task11_sat_u16((int32_t)g_task11_segment_accum.nav_stale_count);
+    log->line_seen_count = task11_sat_u16((int32_t)g_task11_segment_accum.line_seen_count);
+    log->first_line_dist_count = task11_sat_u16(first_line_dist_count);
+    log->last_line_dist_count = task11_sat_u16(last_line_dist_count);
+    log->line_span_count = (last_line_dist_count >= first_line_dist_count) ?
+        task11_sat_u16(last_line_dist_count - first_line_dist_count) : 0U;
+    log->end_gap_count = (last_line_dist_count >= 0) ?
+        task11_sat_u16(dist_count - last_line_dist_count) : 0U;
     log->lost_count = task11_sat_u16((int32_t)g_task11_segment_accum.lost_count);
+    log->max_lost_streak_count =
+        task11_sat_u16((int32_t)g_task11_segment_accum.max_lost_streak_count);
+    log->end_lost_streak_count =
+        task11_sat_u16((int32_t)g_task11_segment_accum.current_lost_streak_count);
     log->max_abs_error = task11_sat_u16(g_task11_segment_accum.max_abs_error);
     log->max_abs_heading_error = task11_sat_u16(g_task11_segment_accum.max_abs_heading_error);
     log->max_abs_gyro_z_x100_mdps =
@@ -4293,6 +4352,7 @@ static void task11_ram_log_segment_finish(uint8_t reason,
     log->phase = g_task11_segment_accum.phase;
     log->reason = reason;
     log->point_mask = ((ir_ok != 0U) && (sample != 0)) ? sample->line_mask : 0U;
+    log->point_flags = point_flags;
     log->nav_update_flags = g_task11_segment_accum.nav_update_flags;
 }
 
@@ -4308,6 +4368,9 @@ static uint8_t task11_ram_window_should_log(uint8_t lap,
     if (window_start < 0) {
         window_start = 0;
     }
+    if (phase_distance_count <= TASK11_RAM_WINDOW_AFTER_START_COUNT) {
+        return 1U;
+    }
     return (phase_distance_count >= window_start) ? 1U : 0U;
 }
 
@@ -4316,6 +4379,7 @@ static void task11_ram_log_window_sample(uint8_t lap,
     uint8_t ir_ok,
     const ir_tracking_sample_t *sample,
     uint8_t edge_seen,
+    uint8_t extra_flags,
     uint32_t elapsed_ms,
     int32_t phase_distance_count,
     int32_t yaw_cdeg,
@@ -4350,6 +4414,7 @@ static void task11_ram_log_window_sample(uint8_t lap,
     log->yaw_progress_cdeg = task11_sat_i16(yaw_progress_cdeg);
     log->expected_yaw_cdeg = task11_sat_i16(expected_yaw_cdeg);
     log->heading_error_cdeg = task11_sat_i16(heading_error_cdeg);
+    log->line_error = task11_sat_i16((ir_ok != 0U) ? sample->error : 0);
     log->nav_turn = task11_sat_i16(nav_turn);
     log->control_turn = task11_sat_i16(control_turn);
     log->gyro_z_x100_mdps = task11_sat_i16(gyro_z_mdps / 100);
@@ -4359,10 +4424,12 @@ static void task11_ram_log_window_sample(uint8_t lap,
     log->lap = lap;
     log->phase = phase;
     log->line_mask = (ir_ok != 0U) ? sample->line_mask : 0U;
-    log->flags = (uint8_t)((ir_ok != 0U) ? 0x01U : 0U);
-    log->flags |= (uint8_t)((line_lost != 0U) ? 0x02U : 0U);
-    log->flags |= (uint8_t)((edge_seen != 0U) ? 0x04U : 0U);
-    log->flags |= (uint8_t)((nav_frame_delta != 0U) ? 0x08U : 0U);
+    log->active_count = (ir_ok != 0U) ? sample->active_count : 0U;
+    log->flags = (uint8_t)((ir_ok != 0U) ? TASK11_LOG_FLAG_IR_OK : 0U);
+    log->flags |= (uint8_t)((line_lost != 0U) ? TASK11_LOG_FLAG_LINE_LOST : 0U);
+    log->flags |= (uint8_t)((edge_seen != 0U) ? TASK11_LOG_FLAG_EDGE_SEEN : 0U);
+    log->flags |= (uint8_t)((nav_frame_delta != 0U) ? TASK11_LOG_FLAG_NAV_FRAME : 0U);
+    log->flags |= extra_flags;
     log->nav_update_flags = nav_update_flags;
     log->nav_frame_delta = (nav_frame_delta > 255U) ? 255U : (uint8_t)nav_frame_delta;
 }
@@ -4371,6 +4438,7 @@ static void task11_ram_log_event(uint8_t event,
     uint8_t reason,
     uint8_t lap,
     uint8_t phase,
+    uint8_t extra_flags,
     uint32_t elapsed_ms,
     int32_t distance_count,
     int32_t phase_distance_count,
@@ -4418,8 +4486,66 @@ static void task11_ram_log_event(uint8_t event,
     log->raw = ((ir_ok != 0U) && (sample != 0)) ? sample->raw : 0xFFU;
     log->line_mask = ((ir_ok != 0U) && (sample != 0)) ? sample->line_mask : 0U;
     log->active_count = ((ir_ok != 0U) && (sample != 0)) ? sample->active_count : 0U;
-    log->flags = (uint8_t)((ir_ok != 0U) ? 0x01U : 0U);
-    log->flags |= (uint8_t)((line_lost != 0U) ? 0x02U : 0U);
+    log->flags = (uint8_t)((ir_ok != 0U) ? TASK11_LOG_FLAG_IR_OK : 0U);
+    log->flags |= (uint8_t)((line_lost != 0U) ? TASK11_LOG_FLAG_LINE_LOST : 0U);
+    log->flags |= extra_flags;
+}
+
+static int32_t task11_phase_start_expected_yaw_cdeg(uint8_t phase)
+{
+    if (phase == 0U) {
+        return TASK11_AC_HEADING_TARGET_CDEG;
+    }
+    if (phase == 2U) {
+        return TASK11_BD_HEADING_TARGET_CDEG;
+    }
+    return 0;
+}
+
+static void task11_log_segment_start_snapshot(uint8_t lap,
+    uint8_t phase,
+    uint32_t elapsed_ms,
+    uint8_t nav_ok,
+    int32_t yaw_cdeg,
+    int32_t gzlp_mdps)
+{
+    ir_tracking_sample_t sample = {0};
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t expected_yaw_cdeg = task11_phase_start_expected_yaw_cdeg(phase);
+    int32_t heading_error_cdeg = 0;
+    uint8_t ir_ok;
+    uint8_t extra_flags = 0U;
+
+    if ((phase == 1U) || (phase == 3U)) {
+        extra_flags |= TASK11_LOG_FLAG_ARC_MODE;
+    }
+    if (nav_ok != 0U) {
+        heading_error_cdeg = ((phase == 0U) || (phase == 2U)) ?
+            normalize_cdeg(yaw_cdeg - expected_yaw_cdeg) : 0;
+    }
+
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    ir_ok = IRTracking_ReadSample(&sample);
+    task11_ram_log_event(TASK11_RAM_EVENT_SEGMENT_START,
+        0U,
+        lap,
+        phase,
+        extra_flags,
+        elapsed_ms,
+        0,
+        0,
+        (nav_ok != 0U) ? yaw_cdeg : 0,
+        0,
+        0,
+        expected_yaw_cdeg,
+        heading_error_cdeg,
+        0,
+        (nav_ok != 0U) ? gzlp_mdps : 0,
+        ir_ok,
+        &sample,
+        motor_b_total,
+        motor_a_total);
 }
 
 static void task11_ram_dump_line_pause(void)
@@ -4473,7 +4599,7 @@ static void task11_ram_log_dump(void)
         summary_overflow,
         TASK11_RAM_LOG_MAX_LAPS);
     task11_ram_dump_line_pause();
-    lc_printf("TASK11_CFG seq=%lu line_base=%d arc_base=%d gyro_st=%u ir_assist=%u h_div=%d h_max=%d h_gd=%d ac_tgt=%d bd_tgt=%d arc_yaw=%u arc_div=%d arc_max=%d arc_gd=%d arc_yaw_arm=%d turn_slow=%u turn_slow_yaw=%d yaw_stop=%u yaw_tol=%d yaw_gz=%d b_exit=%d a_exit=%d ff_gain=%d\r\n",
+    lc_printf("TASK11_CFG seq=%lu line_base=%d arc_base=%d gyro_st=%u ir_assist=%u h_div=%d h_max=%d h_gd=%d ac_tgt=%d bd_tgt=%d gyro_to=%d arc_yaw=%u arc_div=%d arc_max=%d arc_gd=%d arc_yaw_arm=%d win_pre=%d win_start=%d turn_slow=%u turn_slow_yaw=%d yaw_stop=%u yaw_tol=%d yaw_gz=%d b_exit=%d a_exit=%d ff_gain=%d\r\n",
         (unsigned long)seq++,
         TASK11_LINE_BASE_PWM,
         TASK11_ARC_BASE_PWM,
@@ -4482,13 +4608,16 @@ static void task11_ram_log_dump(void)
         TASK11_STRAIGHT_HEADING_CORR_DIVISOR,
         TASK11_STRAIGHT_HEADING_CORR_MAX,
         TASK11_STRAIGHT_GYRO_DAMP_DIVISOR,
-        TASK3_AC_HEADING_TARGET_CDEG,
-        TASK3_BD_HEADING_TARGET_CDEG,
+        TASK11_AC_HEADING_TARGET_CDEG,
+        TASK11_BD_HEADING_TARGET_CDEG,
+        TASK11_GYRO_TURN_TIMEOUT_MS,
         TASK11_ARC_YAW_NAV_ENABLE,
         TASK11_ARC_YAW_CORR_DIVISOR,
         TASK11_ARC_YAW_CORR_MAX,
         TASK11_ARC_GYRO_DAMP_DIVISOR,
         TASK11_ARC_POINT_YAW_ARM_CDEG,
+        TASK11_RAM_WINDOW_BEFORE_COUNT,
+        TASK11_RAM_WINDOW_AFTER_START_COUNT,
         TASK11_FAST_TURN_GYRO_SLOW_ENABLE,
         TASK11_FAST_TURN_GYRO_SLOW_CDEG,
         TASK11_EXIT_TURN_YAW_STOP_ENABLE,
@@ -4542,7 +4671,7 @@ static void task11_ram_log_dump(void)
     task11_ram_dump_line_pause();
     for (i = 0U; i < summary_count; i++) {
         const task11_summary_log_t *log = &g_task11_summary_log[i];
-        lc_printf("TASK11_SUM seq=%lu idx=%u lap=%u seg=%s phase=%u reason=%s t=%lu/%lu dist=%u n=%u nav_n=%u nav_lost=%u nav_fd=%u nav_stale=%u upd=0x%02X lost=%u yaw=%d/%d yprog=%d end_herr=%d avg_herr=%d max_herr=%u avg_gz=%d max_gz=%u avg_gzlp=%d max_gzlp=%u avg_line=%d avg_nav=%d avg_turn=%d avg_abs_err=%d max_err=%u pmask=0x%02X\r\n",
+        lc_printf("TASK11_SUM seq=%lu idx=%u lap=%u seg=%s phase=%u reason=%s t=%lu/%lu dist=%u n=%u nav_n=%u nav_lost=%u nav_fd=%u nav_stale=%u upd=0x%02X line_n=%u line_first=%u line_last=%u line_span=%u end_gap=%u lost=%u lost_streak=%u end_lost=%u yaw=%d/%d yprog=%d end_herr=%d avg_herr=%d max_herr=%u avg_gz=%d max_gz=%u avg_gzlp=%d max_gzlp=%u avg_line=%d avg_nav=%d avg_turn=%d avg_abs_err=%d max_err=%u pmask=0x%02X pflags=0x%02X\r\n",
             (unsigned long)seq++,
             i,
             log->lap,
@@ -4558,7 +4687,14 @@ static void task11_ram_log_dump(void)
             log->nav_frame_count,
             log->nav_stale_count,
             log->nav_update_flags,
+            log->line_seen_count,
+            log->first_line_dist_count,
+            log->last_line_dist_count,
+            log->line_span_count,
+            log->end_gap_count,
             log->lost_count,
+            log->max_lost_streak_count,
+            log->end_lost_streak_count,
             log->yaw_start_cdeg,
             log->yaw_end_cdeg,
             log->yaw_progress_cdeg,
@@ -4574,7 +4710,8 @@ static void task11_ram_log_dump(void)
             log->avg_turn,
             log->avg_abs_error,
             log->max_abs_error,
-            log->point_mask);
+            log->point_mask,
+            log->point_flags);
         task11_ram_dump_line_pause();
     }
     lc_printf("TASK11_DUMP_SECTION_END seq=%lu name=SUM\r\n",
@@ -4587,7 +4724,7 @@ static void task11_ram_log_dump(void)
     task11_ram_dump_line_pause();
     for (i = 0U; i < window_count; i++) {
         const task11_window_log_t *log = &g_task11_window_log[i];
-        lc_printf("TASK11_WIN seq=%lu idx=%u lap=%u seg=%s phase=%u t=%lu dist=%u yaw=%d yaw_raw=%d pyaw=%d yprog=%d exp=%d herr=%d nav_turn=%d turn=%d gz=%d gzlp=%d roll=%d pitch=%d nav_fd=%u upd=0x%02X mask=0x%02X flags=0x%02X\r\n",
+        lc_printf("TASK11_WIN seq=%lu idx=%u lap=%u seg=%s phase=%u t=%lu dist=%u yaw=%d yaw_raw=%d pyaw=%d yprog=%d exp=%d herr=%d err=%d nav_turn=%d turn=%d gz=%d gzlp=%d roll=%d pitch=%d nav_fd=%u upd=0x%02X mask=0x%02X cnt=%u flags=0x%02X\r\n",
             (unsigned long)seq++,
             i,
             log->lap,
@@ -4601,6 +4738,7 @@ static void task11_ram_log_dump(void)
             log->yaw_progress_cdeg,
             log->expected_yaw_cdeg,
             log->heading_error_cdeg,
+            log->line_error,
             log->nav_turn,
             log->control_turn,
             log->gyro_z_x100_mdps,
@@ -4610,6 +4748,7 @@ static void task11_ram_log_dump(void)
             log->nav_frame_delta,
             log->nav_update_flags,
             log->line_mask,
+            log->active_count,
             log->flags);
         task11_ram_dump_line_pause();
     }
@@ -4626,11 +4765,12 @@ static uint32_t g_task11_post_point_elapsed_ms;
 #define task11_ram_log_reset() ((void)0)
 #define task11_ram_log_set_context(lap, phase) ((void)0)
 #define task11_ram_log_segment_reset(lap, phase, start_ms, yaw_start_cdeg) ((void)0)
-#define task11_ram_log_segment_sample(ir_ok, nav_ok, sample, line_turn, nav_turn, control_turn, heading_error_cdeg, gyro_z_mdps, gzlp_mdps, nav_frame_delta, nav_update_flags) ((void)0)
-#define task11_ram_log_segment_finish(reason, end_ms, dist_count, yaw_end_cdeg, yaw_progress_cdeg, heading_error_cdeg, ir_ok, sample) ((void)0)
+#define task11_ram_log_segment_sample(ir_ok, nav_ok, sample, phase_distance_count, line_turn, nav_turn, control_turn, heading_error_cdeg, gyro_z_mdps, gzlp_mdps, nav_frame_delta, nav_update_flags) ((void)0)
+#define task11_ram_log_segment_finish(reason, end_ms, dist_count, yaw_end_cdeg, yaw_progress_cdeg, heading_error_cdeg, ir_ok, sample, point_flags) ((void)0)
 #define task11_ram_window_should_log(lap, phase_distance_count, point_arm_count) (0U)
-#define task11_ram_log_window_sample(lap, phase, ir_ok, sample, edge_seen, elapsed_ms, phase_distance_count, yaw_cdeg, yaw_raw_cdeg, phase_yaw_cdeg, yaw_progress_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, control_turn, gyro_z_mdps, gzlp_mdps, roll_cdeg, pitch_cdeg, nav_frame_delta, nav_update_flags) ((void)0)
-#define task11_ram_log_event(event, reason, lap, phase, elapsed_ms, distance_count, phase_distance_count, yaw_cdeg, yaw_progress_cdeg, yaw_delta_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, gzlp_mdps, ir_ok, sample, motor_b_total, motor_a_total) ((void)0)
+#define task11_ram_log_window_sample(lap, phase, ir_ok, sample, edge_seen, extra_flags, elapsed_ms, phase_distance_count, yaw_cdeg, yaw_raw_cdeg, phase_yaw_cdeg, yaw_progress_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, control_turn, gyro_z_mdps, gzlp_mdps, roll_cdeg, pitch_cdeg, nav_frame_delta, nav_update_flags) ((void)0)
+#define task11_ram_log_event(event, reason, lap, phase, extra_flags, elapsed_ms, distance_count, phase_distance_count, yaw_cdeg, yaw_progress_cdeg, yaw_delta_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, gzlp_mdps, ir_ok, sample, motor_b_total, motor_a_total) ((void)0)
+#define task11_log_segment_start_snapshot(lap, phase, elapsed_ms, nav_ok, yaw_cdeg, gzlp_mdps) ((void)0)
 #define task11_ram_log_dump() ((void)0)
 #endif
 
@@ -4817,6 +4957,7 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
         0U,
         g_task11_log_lap,
         g_task11_log_phase,
+        0U,
         task11_post_point_event_ms(0U),
         0,
         g_task11_post_point_phase_dist_count,
@@ -4949,6 +5090,7 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
         stop_reason,
         g_task11_log_lap,
         g_task11_log_phase,
+        0U,
         task11_post_point_event_ms(elapsed_ms),
         (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2,
         g_task11_post_point_phase_dist_count,
@@ -4994,6 +5136,200 @@ static uint8_t task11_sensor_fast_turn(const char *tag,
         (stop_reason == 6U)) ? 1U : 0U;
 }
 
+static uint8_t task11_gyro_turn_to_yaw(const char *tag,
+    int16_t motor_b_pwm,
+    int16_t motor_a_pwm,
+    int16_t slow_motor_b_pwm,
+    int16_t slow_motor_a_pwm,
+    int32_t yaw_stop_target_cdeg)
+{
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t turn_yaw_start = 0;
+    int32_t turn_yaw_delta = 0;
+    int32_t yaw_stop_error_cdeg = 0;
+    int32_t last_yaw_stop_error_cdeg = 0;
+    int32_t turn_gzlp_mdps = 0;
+    uint8_t stop_reason = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+    uint8_t slow_mode = 0U;
+    uint8_t yaw_error_valid = 0U;
+    uint8_t yaw_cross_ready = 0U;
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    nav_ok = task11_peek_yaw(&turn_yaw_start, &turn_gzlp_mdps);
+    if (nav_ok == 0U) {
+        TB6612_Brake();
+        task11_log_printf("%s abort: gyro_turn nav=0 target=%ld\r\n",
+            tag,
+            yaw_stop_target_cdeg);
+        return 0U;
+    }
+
+    last_yaw_stop_error_cdeg = normalize_cdeg(turn_yaw_start -
+        yaw_stop_target_cdeg);
+    yaw_error_valid = 1U;
+    if (abs_i32(last_yaw_stop_error_cdeg) <= TASK11_TURN_YAW_SLOW_ZONE_CDEG) {
+        slow_mode = 1U;
+    }
+    TB6612_SetDifferential((slow_mode != 0U) ? slow_motor_b_pwm : motor_b_pwm,
+        (slow_mode != 0U) ? slow_motor_a_pwm : motor_a_pwm);
+    task11_ram_log_event(TASK11_RAM_EVENT_TURN_START,
+        0U,
+        g_task11_log_lap,
+        g_task11_log_phase,
+        0U,
+        task11_post_point_event_ms(0U),
+        0,
+        g_task11_post_point_phase_dist_count,
+        turn_yaw_start,
+        0,
+        0,
+        yaw_stop_target_cdeg,
+        last_yaw_stop_error_cdeg,
+        0,
+        turn_gzlp_mdps,
+        0U,
+        &sample,
+        0,
+        0);
+    task11_log_printf("%s start: gyro_turn pwm=%d/%d slow=%d/%d yaw0=%ld target=%ld yerr=%ld timeout=%d\r\n",
+        tag,
+        motor_b_pwm,
+        motor_a_pwm,
+        slow_motor_b_pwm,
+        slow_motor_a_pwm,
+        turn_yaw_start,
+        yaw_stop_target_cdeg,
+        last_yaw_stop_error_cdeg,
+        TASK11_GYRO_TURN_TIMEOUT_MS);
+
+    while (elapsed_ms < TASK11_GYRO_TURN_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        ir_ok = IRTracking_ReadSample(&sample);
+        nav_ok = JY62_PeekNavigation(&nav);
+        if (nav_ok == 0U) {
+            stop_reason = 5U;
+            break;
+        }
+
+        turn_yaw_delta = normalize_cdeg(nav.yaw_relative_cdeg - turn_yaw_start);
+        yaw_stop_error_cdeg = normalize_cdeg(nav.yaw_relative_cdeg -
+            yaw_stop_target_cdeg);
+        yaw_cross_ready = 0U;
+        if ((yaw_error_valid != 0U) &&
+            (((last_yaw_stop_error_cdeg < 0) &&
+              (yaw_stop_error_cdeg >= 0)) ||
+             ((last_yaw_stop_error_cdeg > 0) &&
+              (yaw_stop_error_cdeg <= 0)))) {
+            yaw_cross_ready = 1U;
+        }
+        last_yaw_stop_error_cdeg = yaw_stop_error_cdeg;
+        yaw_error_valid = 1U;
+
+        if ((slow_mode == 0U) &&
+            (abs_i32(yaw_stop_error_cdeg) <= TASK11_TURN_YAW_SLOW_ZONE_CDEG)) {
+            slow_mode = 1U;
+            TB6612_SetDifferential(slow_motor_b_pwm, slow_motor_a_pwm);
+        }
+        if ((abs_i32(yaw_stop_error_cdeg) <= TASK11_TURN_YAW_STOP_TOL_CDEG) ||
+            (yaw_cross_ready != 0U)) {
+            stop_reason = 6U;
+            break;
+        }
+
+        if (report_elapsed_ms >= TASK11_FAST_TURN_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            encoder_get_total_counts(&motor_b_total, &motor_a_total);
+            task11_log_printf("%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld ydelta=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u\r\n",
+                tag,
+                elapsed_ms,
+                nav_ok,
+                nav.yaw_relative_cdeg,
+                yaw_stop_target_cdeg,
+                yaw_stop_error_cdeg,
+                turn_yaw_delta,
+                nav.gyro_z_filtered_mdps,
+                ir_ok,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                (ir_ok != 0U) ? sample.error : 0,
+                motor_b_total,
+                motor_a_total,
+                slow_mode);
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    TB6612_Brake();
+    ir_ok = IRTracking_ReadSample(&sample);
+    nav_ok = JY62_PeekNavigation(&nav);
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    task11_ram_log_event(TASK11_RAM_EVENT_TURN_STOP,
+        stop_reason,
+        g_task11_log_lap,
+        g_task11_log_phase,
+        0U,
+        task11_post_point_event_ms(elapsed_ms),
+        (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2,
+        g_task11_post_point_phase_dist_count,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        (nav_ok != 0U) ? abs_i32(turn_yaw_delta) : 0,
+        (nav_ok != 0U) ? turn_yaw_delta : 0,
+        yaw_stop_target_cdeg,
+        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
+            yaw_stop_target_cdeg) : 0,
+        0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        &sample,
+        motor_b_total,
+        motor_a_total);
+    task11_log_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld ydelta=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u\r\n",
+        tag,
+        task11_reason_name(stop_reason),
+        elapsed_ms,
+        nav_ok,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        yaw_stop_target_cdeg,
+        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
+            yaw_stop_target_cdeg) : 0,
+        (nav_ok != 0U) ? turn_yaw_delta : 0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0,
+        motor_b_total,
+        motor_a_total,
+        slow_mode);
+
+    encoder_reset_distance_counts();
+    g_task11_post_point_elapsed_ms += elapsed_ms;
+    return (stop_reason == 6U) ? 1U : 0U;
+}
+
 static uint8_t task11_advance_after_point(const char *tag, int32_t advance_count)
 {
     ir_tracking_sample_t sample = {0};
@@ -5012,6 +5348,7 @@ static uint8_t task11_advance_after_point(const char *tag, int32_t advance_count
             1U,
             g_task11_log_lap,
             g_task11_log_phase,
+            0U,
             task11_post_point_event_ms(0U),
             0,
             g_task11_post_point_phase_dist_count,
@@ -5038,6 +5375,7 @@ static uint8_t task11_advance_after_point(const char *tag, int32_t advance_count
         0U,
         g_task11_log_lap,
         g_task11_log_phase,
+        0U,
         task11_post_point_event_ms(0U),
         0,
         g_task11_post_point_phase_dist_count,
@@ -5109,6 +5447,7 @@ static uint8_t task11_advance_after_point(const char *tag, int32_t advance_count
         stop_reason,
         g_task11_log_lap,
         g_task11_log_phase,
+        0U,
         task11_post_point_event_ms(elapsed_ms),
         distance_count,
         g_task11_post_point_phase_dist_count,
@@ -5454,22 +5793,37 @@ static uint8_t run_task2_cd_exit_angle_straight(const char *tag)
 
 static void run_task10_ab_zero_test(void)
 {
-    int32_t yaw_cdeg;
-    int32_t gzlp_mdps;
+    uint32_t elapsed_ms = 0;
+    int32_t yaw_cdeg = 0;
+    int32_t gzlp_mdps = 0;
     uint8_t ok;
     uint8_t nav_ok;
 
     TB6612_Brake();
     ok = jy62_zero_to_current("TASK10_AB_ZERO", 0U);
     nav_ok = task11_peek_yaw(&yaw_cdeg, &gzlp_mdps);
-    lc_printf("TASK10 zero_ab: ok=%u nav=%u rel=%ld gzlp=%ld\r\n",
+    lc_printf("TASK10 yaw_monitor start: zero_ok=%u nav=%u rel=%ld gzlp=%ld period=200ms\r\n",
         ok,
         nav_ok,
         yaw_cdeg,
         gzlp_mdps);
+
+    while (task_uart_stop_requested() == 0U) {
+        delay_ms_with_st011(200U);
+        elapsed_ms += 200U;
+        nav_ok = task11_peek_yaw(&yaw_cdeg, &gzlp_mdps);
+        lc_printf("TASK10_YAW t=%lu nav=%u rel=%ld deg_x100=%ld gzlp=%ld\r\n",
+            elapsed_ms,
+            nav_ok,
+            yaw_cdeg,
+            yaw_cdeg,
+            gzlp_mdps);
+    }
+
+    lc_printf("TASK10 yaw_monitor stop: t=%lu\r\n", elapsed_ms);
 }
 
-static void run_task11_ir_map_test(void)
+static void run_task11_ir_map_test_laps(uint8_t target_laps)
 {
     task11_line_result_t result;
     ir_tracking_sample_t sample = {0};
@@ -5502,10 +5856,13 @@ static void run_task11_ir_map_test(void)
     uint8_t nav_ok;
     uint8_t nav_update_flags = 0U;
     uint8_t straight_point_confirm = 0U;
+    uint16_t straight_line_seen_count = 0U;
     uint8_t ir_ok = 0U;
     uint8_t stop_reason = 0U;
 
     TB6612_Brake();
+    delay_ms_with_st011(TASK11_POINT_SETTLE_MS);
+    (void)jy62_zero_to_current("TASK11_AC_ZERO", 0U);
     delay_ms_with_st011(TASK11_POINT_SETTLE_MS);
     IRTracking_Init();
     encoder_reset_distance_counts();
@@ -5541,6 +5898,7 @@ static void run_task11_ir_map_test(void)
         0U,
         lap_count,
         phase,
+        0U,
         elapsed_ms,
         0,
         0,
@@ -5555,7 +5913,18 @@ static void run_task11_ir_map_test(void)
         &sample,
         0,
         0);
-    task11_log_printf("TASK11 start: continuous_ir laps=%u yaw=%ld nav=%u nav_fd=%lu upd=0x%02X base=%d arc_base=%d ac_tgt=%d bd_tgt=%d cb_diff=%d/%d da_diff=%d/%d ff_gain=%d gyro_st=%u arc_yaw=%u yaw_stop=%u b_exit=%d a_exit=%d report=%d\r\n",
+    task11_log_segment_start_snapshot(lap_count,
+        phase,
+        elapsed_ms,
+        nav_ok,
+        yaw_cdeg,
+        gzlp_mdps);
+    if (target_laps == 0U) {
+        target_laps = 1U;
+    }
+
+    task11_log_printf("TASK11 start: ac_zero_collect laps=%u cfg_laps=%u yaw=%ld nav=%u nav_fd=%lu upd=0x%02X base=%d arc_base=%d ac_tgt=%d bd_tgt=%d gyro_to=%d cb_diff=%d/%d da_diff=%d/%d ff_gain=%d gyro_st=%u arc_yaw=%u yaw_stop=%u b_exit=%d a_exit=%d report=%d\r\n",
+        target_laps,
         TASK11_TARGET_LAPS,
         yaw_cdeg,
         nav_ok,
@@ -5563,8 +5932,9 @@ static void run_task11_ir_map_test(void)
         nav_update_flags,
         TASK11_LINE_BASE_PWM,
         TASK11_ARC_BASE_PWM,
-        TASK3_AC_HEADING_TARGET_CDEG,
-        TASK3_BD_HEADING_TARGET_CDEG,
+        TASK11_AC_HEADING_TARGET_CDEG,
+        TASK11_BD_HEADING_TARGET_CDEG,
+        TASK11_GYRO_TURN_TIMEOUT_MS,
         TASK11_CB_ARC_ENTRY_TARGET_DIFF,
         TASK11_CB_ARC_CRUISE_TARGET_DIFF,
         TASK11_DA_ARC_ENTRY_TARGET_DIFF,
@@ -5577,7 +5947,7 @@ static void run_task11_ir_map_test(void)
         TASK11_A_EXIT_TARGET_CDEG,
         TASK11_LINE_REPORT_PERIOD_MS);
 
-    while ((elapsed_ms < TASK11_TOTAL_MAX_RUN_MS) && (lap_count < TASK11_TARGET_LAPS)) {
+    while ((elapsed_ms < TASK11_TOTAL_MAX_RUN_MS) && (lap_count < target_laps)) {
         int32_t total_distance_count;
         int32_t phase_distance_count;
         int32_t raw_error = 0;
@@ -5601,8 +5971,10 @@ static void run_task11_ir_map_test(void)
         const char *force_name;
         uint8_t arc_mode;
         uint8_t line_valid;
+        uint8_t line_lost_seen;
         uint8_t straight_point_candidate;
         uint8_t edge_point_seen;
+        uint8_t point_log_flags = 0U;
         uint8_t quick_turn_ok = 1U;
         uint8_t point_ready = 0U;
 
@@ -5612,7 +5984,7 @@ static void run_task11_ir_map_test(void)
             force_name = "C_FORCE";
             arc_mode = 0U;
             expected_turn_dir = 0;
-            straight_target_cdeg = TASK3_AC_HEADING_TARGET_CDEG;
+            straight_target_cdeg = TASK11_AC_HEADING_TARGET_CDEG;
             point_arm_count = TASK11_AC_POINT_ARM_COUNT;
             force_count = TASK11_STRAIGHT_FORCE_COUNT;
         } else if (phase == 1U) {
@@ -5629,12 +6001,13 @@ static void run_task11_ir_map_test(void)
             force_name = "D_FORCE";
             arc_mode = 0U;
             expected_turn_dir = 0;
-            straight_target_cdeg = TASK3_BD_HEADING_TARGET_CDEG;
+            straight_target_cdeg = TASK11_BD_HEADING_TARGET_CDEG;
             point_arm_count = TASK11_BD_POINT_ARM_COUNT;
             force_count = TASK11_STRAIGHT_FORCE_COUNT;
         } else {
             phase_name = "DA";
-            point_name = "A_FINISH";
+            point_name = ((uint8_t)(lap_count + 1U) < target_laps) ?
+                "A_EXIT" : "A_FINISH";
             force_name = "A_FORCE";
             arc_mode = 1U;
             expected_turn_dir = TASK3_ARC_TURN_RIGHT;
@@ -5679,19 +6052,32 @@ static void run_task11_ir_map_test(void)
         }
         ir_ok = IRTracking_ReadSample(&sample);
         line_valid = ((ir_ok != 0U) && (sample.line_lost == 0U)) ? 1U : 0U;
+        line_lost_seen = ((ir_ok != 0U) && (sample.line_lost != 0U)) ? 1U : 0U;
+        if ((arc_mode == 0U) && (line_valid != 0U)) {
+            if (straight_line_seen_count < 65535U) {
+                straight_line_seen_count++;
+            }
+        }
         if (phase == 0U) {
             edge_point_seen = ((ir_ok != 0U) &&
                 (task11_left_edge_seen(&sample, 1U) != 0U)) ? 1U : 0U;
         } else if (phase == 1U) {
-            edge_point_seen = ((ir_ok != 0U) &&
-                (task11_left_edge_seen(&sample, 0U) != 0U)) ? 1U : 0U;
+            edge_point_seen = 0U;
         } else if (phase == 2U) {
             edge_point_seen = ((ir_ok != 0U) &&
                 (task11_right_edge_seen(&sample, 0U) != 0U)) ? 1U : 0U;
         } else {
-            edge_point_seen = ((ir_ok != 0U) &&
-                (task11_right_edge_seen(&sample, 0U) != 0U)) ? 1U : 0U;
+            edge_point_seen = 0U;
         }
+        point_log_flags = (uint8_t)((ir_ok != 0U) ? TASK11_LOG_FLAG_IR_OK : 0U);
+        point_log_flags |= (uint8_t)((line_lost_seen != 0U) ?
+            TASK11_LOG_FLAG_LINE_LOST : 0U);
+        point_log_flags |= (uint8_t)((edge_point_seen != 0U) ?
+            TASK11_LOG_FLAG_EDGE_SEEN : 0U);
+        point_log_flags |= (uint8_t)((straight_line_seen_count != 0U) ?
+            TASK11_LOG_FLAG_GUIDE_SEEN : 0U);
+        point_log_flags |= (uint8_t)((arc_mode != 0U) ?
+            TASK11_LOG_FLAG_ARC_MODE : 0U);
         if (arc_mode != 0U) {
             base_pwm = TASK11_ARC_BASE_PWM;
             if (phase == 1U) {
@@ -5780,7 +6166,8 @@ static void run_task11_ir_map_test(void)
             control_turn = nav_turn;
 #if TASK11_STRAIGHT_IR_ASSIST_ENABLE
             if (line_valid != 0U) {
-                control_turn = clamp_i32(control_turn + line_turn,
+                control_turn = clamp_i32(control_turn +
+                    (line_turn / TASK11_STRAIGHT_IR_ASSIST_DIVISOR),
                     -TASK11_LINE_TURN_LIMIT,
                     TASK11_LINE_TURN_LIMIT);
             }
@@ -5791,7 +6178,7 @@ static void run_task11_ir_map_test(void)
 
         if (arc_mode == 0U) {
             straight_point_candidate = ((phase_distance_count >= point_arm_count) &&
-                (edge_point_seen != 0U)) ? 1U : 0U;
+                (line_valid != 0U)) ? 1U : 0U;
             if (straight_point_candidate != 0U) {
                 if (straight_point_confirm < TASK11_STRAIGHT_POINT_CONFIRM_COUNT) {
                     straight_point_confirm++;
@@ -5799,11 +6186,16 @@ static void run_task11_ir_map_test(void)
             } else {
                 straight_point_confirm = 0U;
             }
-            point_ready = (straight_point_confirm >= TASK11_STRAIGHT_POINT_CONFIRM_COUNT) ? 1U : 0U;
+            point_ready = (straight_point_confirm >=
+                TASK11_STRAIGHT_POINT_CONFIRM_COUNT) ? 1U : 0U;
         } else {
-            point_ready = ((phase_distance_count >= point_arm_count) &&
-                (yaw_progress_cdeg >= TASK11_ARC_POINT_YAW_ARM_CDEG) &&
-                (edge_point_seen != 0U)) ? 1U : 0U;
+            if ((phase == 1U) || (phase == 3U)) {
+                point_ready = (line_lost_seen != 0U) ? 1U : 0U;
+            } else {
+                point_ready = ((phase_distance_count >= point_arm_count) &&
+                    (yaw_progress_cdeg >= TASK11_ARC_POINT_YAW_ARM_CDEG) &&
+                    (edge_point_seen != 0U)) ? 1U : 0U;
+            }
         }
 
         left_pwm = clamp_i32(drive.motor_b_pwm + control_turn,
@@ -5815,6 +6207,7 @@ static void run_task11_ir_map_test(void)
         task11_ram_log_segment_sample(ir_ok,
             nav_ok,
             &sample,
+            phase_distance_count,
             line_turn,
             nav_turn,
             control_turn,
@@ -5826,11 +6219,16 @@ static void run_task11_ir_map_test(void)
         if (task11_ram_window_should_log(lap_count,
             phase_distance_count,
             point_arm_count) != 0U) {
+            uint8_t window_log_flags = point_log_flags;
+            if (phase_distance_count <= TASK11_RAM_WINDOW_AFTER_START_COUNT) {
+                window_log_flags |= TASK11_LOG_FLAG_START_WINDOW;
+            }
             task11_ram_log_window_sample(lap_count,
                 phase,
                 ir_ok,
                 &sample,
                 edge_point_seen,
+                window_log_flags,
                 elapsed_ms,
                 phase_distance_count,
                 yaw_cdeg,
@@ -5864,11 +6262,13 @@ static void run_task11_ir_map_test(void)
                 yaw_progress_cdeg,
                 heading_error_cdeg,
                 ir_ok,
-                &sample);
+                &sample,
+                point_log_flags);
             task11_ram_log_event(TASK11_RAM_EVENT_POINT,
                 result.reason,
                 lap_count,
                 phase,
+                point_log_flags,
                 elapsed_ms,
                 phase_distance_count,
                 phase_distance_count,
@@ -5891,9 +6291,11 @@ static void run_task11_ir_map_test(void)
                 (ir_ok != 0U) ? sample.line_mask : 0U);
             task11_print_point(point_name, &result);
             st011_start_pulse(TASK11_POINT_ALARM_MS);
-            task11_log_printf("TASK11_POINT_STATE seg=%s edge=%u nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld raw=0x%02X mask=0x%02X cnt=%u\r\n",
+            task11_log_printf("TASK11_POINT_STATE seg=%s edge=%u line_seen_n=%u pflags=0x%02X nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld raw=0x%02X mask=0x%02X cnt=%u\r\n",
                 phase_name,
                 edge_point_seen,
+                straight_line_seen_count,
+                point_log_flags,
                 nav_ok,
                 nav_frame_delta,
                 nav_update_flags,
@@ -5941,15 +6343,11 @@ static void run_task11_ir_map_test(void)
                     stop_reason = 2U;
                     break;
                 }
-                quick_turn_ok = task11_sensor_fast_turn("TASK11_B_LEFT_TURN",
-                    TASK11_LEFT_TURN_B_PWM,
-                    TASK11_LEFT_TURN_A_PWM,
-                    TASK11_LEFT_TURN_SLOW_B_PWM,
-                    TASK11_LEFT_TURN_SLOW_A_PWM,
-                    TASK11_IR_CENTER_4_MASK,
-                    TASK11_IR_CENTER_4_FORBID_MASK,
-                    TASK11_TURN_CENTER4_ERROR_MAX,
-                    TASK11_EXIT_TURN_YAW_STOP_ENABLE,
+                quick_turn_ok = task11_gyro_turn_to_yaw("TASK11_B_GYRO_TO_BD",
+                    TASK11_EXIT_LEFT_TURN_B_PWM,
+                    TASK11_EXIT_LEFT_TURN_A_PWM,
+                    TASK11_EXIT_LEFT_TURN_SLOW_B_PWM,
+                    TASK11_EXIT_LEFT_TURN_SLOW_A_PWM,
                     TASK11_B_EXIT_TARGET_CDEG);
             } else if (phase == 2U) {
                 quick_turn_ok = task11_advance_after_point("TASK11_D_ADVANCE",
@@ -5968,22 +6366,18 @@ static void run_task11_ir_map_test(void)
                     TASK11_TURN_CENTER6_ERROR_MAX,
                     0U,
                     0);
-            } else if ((uint8_t)(lap_count + 1U) < TASK11_TARGET_LAPS) {
+            } else if ((uint8_t)(lap_count + 1U) < target_laps) {
                 quick_turn_ok = task11_advance_after_point("TASK11_A_ADVANCE",
                     TASK11_ARC_POINT_ADVANCE_COUNT);
                 if (quick_turn_ok == 0U) {
                     stop_reason = 2U;
                     break;
                 }
-                quick_turn_ok = task11_sensor_fast_turn("TASK11_A_RIGHT_TURN",
-                    TASK11_RIGHT_TURN_B_PWM,
-                    TASK11_RIGHT_TURN_A_PWM,
-                    TASK11_RIGHT_TURN_SLOW_B_PWM,
-                    TASK11_RIGHT_TURN_SLOW_A_PWM,
-                    TASK11_IR_CENTER_4_MASK,
-                    TASK11_IR_CENTER_4_FORBID_MASK,
-                    TASK11_TURN_CENTER4_ERROR_MAX,
-                    TASK11_EXIT_TURN_YAW_STOP_ENABLE,
+                quick_turn_ok = task11_gyro_turn_to_yaw("TASK11_A_GYRO_TO_AC",
+                    TASK11_EXIT_RIGHT_TURN_B_PWM,
+                    TASK11_EXIT_RIGHT_TURN_A_PWM,
+                    TASK11_EXIT_RIGHT_TURN_SLOW_B_PWM,
+                    TASK11_EXIT_RIGHT_TURN_SLOW_A_PWM,
                     TASK11_A_EXIT_TARGET_CDEG);
             }
             if (quick_turn_ok == 0U) {
@@ -5993,7 +6387,7 @@ static void run_task11_ir_map_test(void)
 
             if (phase == 3U) {
                 lap_count++;
-                if (lap_count >= TASK11_TARGET_LAPS) {
+                if (lap_count >= target_laps) {
                     stop_reason = 1U;
                     break;
                 }
@@ -6003,6 +6397,7 @@ static void run_task11_ir_map_test(void)
             }
             phase_start_count = 0;
             straight_point_confirm = 0U;
+            straight_line_seen_count = 0U;
             filtered_error = 0;
             last_filtered_error = 0;
             last_turn = 0;
@@ -6033,6 +6428,12 @@ static void run_task11_ir_map_test(void)
                 pitch_cdeg = 0;
             }
             task11_ram_log_segment_reset(lap_count, phase, elapsed_ms, yaw_start);
+            task11_log_segment_start_snapshot(lap_count,
+                phase,
+                elapsed_ms,
+                nav_ok,
+                yaw_cdeg,
+                gzlp_mdps);
             continue;
         } else if (phase_distance_count >= force_count) {
             result.reason = 2U;
@@ -6049,11 +6450,13 @@ static void run_task11_ir_map_test(void)
                 yaw_progress_cdeg,
                 heading_error_cdeg,
                 ir_ok,
-                &sample);
+                &sample,
+                point_log_flags);
             task11_ram_log_event(TASK11_RAM_EVENT_FORCE,
                 result.reason,
                 lap_count,
                 phase,
+                point_log_flags,
                 elapsed_ms,
                 phase_distance_count,
                 phase_distance_count,
@@ -6076,9 +6479,11 @@ static void run_task11_ir_map_test(void)
                 (ir_ok != 0U) ? sample.line_mask : 0U);
             task11_print_point(force_name, &result);
             st011_start_pulse(TASK11_POINT_ALARM_MS);
-            task11_log_printf("TASK11_POINT_STATE seg=%s edge=%u nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld raw=0x%02X mask=0x%02X cnt=%u\r\n",
+            task11_log_printf("TASK11_POINT_STATE seg=%s edge=%u line_seen_n=%u pflags=0x%02X nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld raw=0x%02X mask=0x%02X cnt=%u\r\n",
                 phase_name,
                 edge_point_seen,
+                straight_line_seen_count,
+                point_log_flags,
                 nav_ok,
                 nav_frame_delta,
                 nav_update_flags,
@@ -6103,7 +6508,7 @@ static void run_task11_ir_map_test(void)
 
             if (phase == 3U) {
                 lap_count++;
-                if (lap_count >= TASK11_TARGET_LAPS) {
+                if (lap_count >= target_laps) {
                     stop_reason = 2U;
                     break;
                 }
@@ -6114,12 +6519,19 @@ static void run_task11_ir_map_test(void)
             phase_start_count = total_distance_count;
             yaw_start = yaw_cdeg;
             straight_point_confirm = 0U;
+            straight_line_seen_count = 0U;
             filtered_error = 0;
             last_filtered_error = 0;
             last_turn = 0;
             report_elapsed_ms = 0;
             task11_diff_pid_reset(&diff_pid);
             task11_ram_log_segment_reset(lap_count, phase, elapsed_ms, yaw_start);
+            task11_log_segment_start_snapshot(lap_count,
+                phase,
+                elapsed_ms,
+                nav_ok,
+                yaw_cdeg,
+                gzlp_mdps);
             continue;
         }
 
@@ -6133,13 +6545,15 @@ static void run_task11_ir_map_test(void)
 
         if (report_elapsed_ms >= TASK11_LINE_REPORT_PERIOD_MS) {
             report_elapsed_ms = 0;
-            task11_log_printf("TASK11_DATA lap=%u seg=%s phase=%u t=%lu dist=%ld edge=%u nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld filt=%ld der=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld fb=%ld corr=%ld base=%ld pwm=%ld/%ld\r\n",
+            task11_log_printf("TASK11_DATA lap=%u seg=%s phase=%u t=%lu dist=%ld edge=%u line_seen_n=%u pflags=0x%02X nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld filt=%ld der=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld fb=%ld corr=%ld base=%ld pwm=%ld/%ld\r\n",
                 lap_count,
                 phase_name,
                 phase,
                 elapsed_ms,
                 phase_distance_count,
                 edge_point_seen,
+                straight_line_seen_count,
+                point_log_flags,
                 nav_ok,
                 nav_frame_delta,
                 nav_update_flags,
@@ -6179,13 +6593,14 @@ static void run_task11_ir_map_test(void)
     }
     encoder_reset_distance_counts();
     if (stop_reason == 0U) {
-        stop_reason = (lap_count >= TASK11_TARGET_LAPS) ? 1U :
+        stop_reason = (lap_count >= target_laps) ? 1U :
             ((elapsed_ms >= TASK11_TOTAL_MAX_RUN_MS) ? 4U : 2U);
     }
     task11_ram_log_event(TASK11_RAM_EVENT_COMPLETE,
         stop_reason,
         lap_count,
         phase,
+        0U,
         elapsed_ms,
         0,
         0,
@@ -6205,12 +6620,17 @@ static void run_task11_ir_map_test(void)
         elapsed_ms,
         lap_count,
         phase);
-    task11_log_printf("TASK11 complete: continuous_ir reason=%s t=%lu lap=%u phase=%u\r\n",
+    task11_log_printf("TASK11 complete: ac_zero_collect reason=%s t=%lu lap=%u phase=%u\r\n",
         task11_reason_name(stop_reason),
         elapsed_ms,
         lap_count,
         phase);
     task11_ram_log_dump();
+}
+
+static void run_task11_ir_map_test(void)
+{
+    run_task11_ir_map_test_laps((uint8_t)TASK11_TARGET_LAPS);
 }
 
 static void run_task_dispatcher(void)
@@ -6242,9 +6662,9 @@ static void run_task_dispatcher(void)
         } else if (task_id == TASK_ID_2) {
             run_task2_abcd();
         } else if (task_id == TASK_ID_3) {
-            run_task3_acbda();
+            run_task11_ir_map_test_laps(1U);
         } else if (task_id == TASK_ID_4) {
-            run_task4_four_laps();
+            run_task11_ir_map_test_laps(4U);
         } else if (task_id == TASK_ID_5) {
             TB6612_Brake();
             run_motor_pid_stream();

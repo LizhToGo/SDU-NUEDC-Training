@@ -81,10 +81,18 @@ PREFERRED_COLUMNS = [
     "nav_stale",
     "upd",
     "lost",
+    "line_n",
+    "line_first",
+    "line_last",
+    "line_span",
+    "end_gap",
     "avg_turn",
+    "lost_streak",
+    "end_lost",
     "avg_abs_err",
     "max_err",
     "pmask",
+    "pflags",
     "raw",
     "mask",
     "cnt",
@@ -108,6 +116,9 @@ PREFERRED_COLUMNS = [
     "h_gd",
     "ac_tgt",
     "bd_tgt",
+    "gyro_to",
+    "win_pre",
+    "win_start",
     "arc_yaw",
     "arc_div",
     "arc_max",
@@ -153,6 +164,9 @@ RUN_COLUMNS = [
     "arc_yaw_arm",
     "ac_tgt",
     "bd_tgt",
+    "gyro_to",
+    "win_pre",
+    "win_start",
     "yaw_stop",
     "yaw_tol",
     "yaw_gz",
@@ -359,6 +373,14 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
         avg_nav = [int_value(row, "avg_nav") for row in seg_rows]
         avg_line = [int_value(row, "avg_line") for row in seg_rows]
         avg_turn = [int_value(row, "avg_turn") for row in seg_rows]
+        line_n = [int_value(row, "line_n") for row in seg_rows]
+        line_first = [int_value(row, "line_first") for row in seg_rows]
+        line_last = [int_value(row, "line_last") for row in seg_rows]
+        line_span = [int_value(row, "line_span") for row in seg_rows]
+        end_gap = [int_value(row, "end_gap") for row in seg_rows]
+        lost_streak = [int_value(row, "lost_streak") for row in seg_rows]
+        end_lost = [int_value(row, "end_lost") for row in seg_rows]
+        pflags = [row.get("pflags", "") for row in seg_rows]
         lost_sum = sum(int_value(row, "lost") for row in seg_rows)
         nav_lost_sum = sum(int_value(row, "nav_lost") for row in seg_rows)
         dist_avg = statistics.mean(dists) if dists else 0.0
@@ -366,6 +388,9 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
             f"{seg}: n={len(seg_rows)} dist={dists} dist_avg={dist_avg:.1f} "
             f"yprog={yprog} avg_herr={avg_herr} max_herr={max_herr} "
             f"avg_line={avg_line} avg_nav={avg_nav} avg_turn={avg_turn} "
+            f"line_n={line_n} line_first={line_first} line_last={line_last} "
+            f"line_span={line_span} end_gap={end_gap} "
+            f"lost_streak={lost_streak} end_lost={end_lost} pflags={pflags} "
             f"lost_sum={lost_sum} nav_lost_sum={nav_lost_sum}"
         )
 
@@ -530,6 +555,9 @@ def build_run_summary_row(
         "arc_yaw_arm": cfg_row.get("arc_yaw_arm", ""),
         "ac_tgt": cfg_row.get("ac_tgt", ""),
         "bd_tgt": cfg_row.get("bd_tgt", ""),
+        "gyro_to": cfg_row.get("gyro_to", ""),
+        "win_pre": cfg_row.get("win_pre", ""),
+        "win_start": cfg_row.get("win_start", ""),
         "yaw_stop": cfg_row.get("yaw_stop", ""),
         "yaw_tol": cfg_row.get("yaw_tol", ""),
         "yaw_gz": cfg_row.get("yaw_gz", ""),
