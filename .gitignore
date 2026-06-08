@@ -39,4 +39,12 @@ Thumbs.db
 
 .codegraph
 AGENT.md
+
+# 本地代理/编辑器配置
 opencode.json
+
+# Task11 日志脚本导出的本地经验数据
+/task11_experience_*.csv
+/task11_experience_summary.txt
+/data/task11_experience_*.csv
+/data/task11_experience_summary.txt
