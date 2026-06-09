@@ -14,12 +14,12 @@
 |---|---|---|
 | `A26` / UART0 `01` | 任务一 A -> B 直线 | 使用差速直线模块，实车直线参数以当前 `app_config.h` 为准 |
 | `A24` / UART0 `02` | 任务二 A -> B -> C -> D -> A | 调试态，AB/CD 直线与 Task11 风格弧线组合 |
-| `B24` / UART0 `03` | 任务三 A -> C -> B -> D -> A | AC/BD 使用固定绝对航向，CB/DA 使用 Task11 风格弧线 |
-| `A22` / UART0 `04` | 任务四，按任务三路线连续 4 圈 | 复用任务三四段逻辑，连续 4 圈 |
+| `B24` / UART0 `03` | 任务三 A -> C -> B -> D -> A | 走 `run_task11_ir_map_test_laps(1U)`，Task11 专用航向目标 |
+| `A22` / UART0 `04` | 任务四，按任务三路线连续 4 圈 | 走 `run_task11_ir_map_test_laps(4U)`，Task11 专用航向目标 |
 | UART0 `05` | 轮速 / 编码器 / PWM PID 测试 | 可用 |
 | UART0 `06` | A -> C 后 C 点快速左转测试 | 可用，用于测试 C 点入弯快转角度 |
 | UART0 `07` | 轮速 / 编码器 / PWM PD 测试 | 可用 |
-| UART0 `10` | Task10，AB 方向零航向标定 | 可用，车头朝 AB 放置后执行 |
+| UART0 `10` | Task10，AB 方向零航向标定+持续监控 | 可用，车头朝 AB 放置后执行 |
 | UART0 `11` | Task11，全程黑线经验数据采集 | 可用，默认关闭大体量日志输出 |
 | UART0 `00` | 强制停车 | 运行中可用 |
 
@@ -154,7 +154,7 @@ Task11 风格弧线和采集：
 
 ### 任务三
 
-任务三路线：
+任务三当前走 `run_task11_ir_map_test_laps(1U)`，即 Task11 单圈模式。
 
 ```text
 A -> C -> B -> D -> A
@@ -162,16 +162,17 @@ A -> C -> B -> D -> A
 
 当前实现：
 
-- `TASK3_AC`：A 到 C，目标航向 `TASK3_AC_HEADING_TARGET_CDEG=-36.60°`。
-- `TASK3_CB`：C 到 B，使用 `run_task3_task11_arc_line_follow_segment()`，左弧线。
-- `TASK3_BD`：B 到 D，目标航向 `TASK3_BD_HEADING_TARGET_CDEG=-139.20°`，当前为绝对目标角。
-- `TASK3_DA`：D 到 A，使用同一套 Task11 风格弧线，右弧线，最终 A 点停车。
+- `TASK11_AC`：A 到 C，目标航向 `TASK11_AC_HEADING_TARGET_CDEG=-50`。
+- `TASK11_CB`：C 到 B，使用 Task11 弧线控制（差速+红外），点位判定改为 `line_lost_seen`。
+- B 点出口转向从红外 `sensor_fast_turn` 改为陀螞仪 `gyro_turn_to_yaw`，使用 `TASK11_B_EXIT_TARGET_CDEG`。
+- `TASK11_BD`：B 到 D，目标航向 `TASK11_BD_HEADING_TARGET_CDEG=-10638`。
+- `TASK11_DA`：D 到 A，使用 Task11 弧线控制，A 点出口转向同样改为 `gyro_turn_to_yaw`。
 
 跑任务三前，建议先用 Task10 建立 AB 零航向，再把车放到 A 点、车头朝 C 启动。详细说明见 [docs/任务三调试说明.md](docs/任务三调试说明.md)。
 
 ### 任务四
 
-任务四按任务三路线连续执行 4 圈：
+任务四走 `run_task11_ir_map_test_laps(4U)`，连续 4 圈 Task11 路径：
 
 ```text
 TASK4_L1_AC -> TASK4_L1_CB -> TASK4_L1_BD -> TASK4_L1_DA
@@ -179,13 +180,13 @@ TASK4_L1_AC -> TASK4_L1_CB -> TASK4_L1_BD -> TASK4_L1_DA
 TASK4_L4_DA
 ```
 
-前三圈 A 点出线后不结束，继续下一圈；第四圈回到 A 点后刹车并触发结束声光。当前每一圈的 AC/BD 目标角都使用固定绝对目标，而不是用 A/B 出线瞬间航向加相对角。
+前三圈 A 点出线后不结束，继续下一圈；第四圈回到 A 点后刹车并触发结束声光。B/A 点出口转向均使用 `gyro_turn_to_yaw`，按绝对航向停止。
 
 详细说明见 [docs/任务四调试说明.md](docs/任务四调试说明.md)。
 
 ### 任务十和任务十一
 
-- `10`：Task10，把当前 JY62 相对航向置零，用于 AB 方向标定。正常输出应包含 `TASK10 zero_ab: ok=1 nav=1 rel=0`。
+- `10`：Task10，把当前 JY62 相对航向置零，用于 AB 方向标定。标定后进入持续航向监控模式，每 200ms 打印航向状态。
 - `11`：Task11，全程黑线经验数据采集。车头从 A 指向 C，按 `AC -> CB -> BD -> DA` 跑 5 圈，用于估计任务三/四可复用的距离、航向、转向和点位识别参数。
 
 当前 `TASK11_UART_LOG_ENABLE=0`、`TASK11_RAM_LOG_ENABLE=0`，默认不输出大体量采集日志。需要采集时在 `app_config.h` 中打开对应开关，再用 [tools/task11_log_to_csv.py](tools/task11_log_to_csv.py) 整理日志。

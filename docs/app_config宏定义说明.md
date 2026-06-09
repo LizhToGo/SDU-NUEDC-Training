@@ -114,7 +114,7 @@
 
 | 宏 | 当前值 | 状态 | 作用 |
 | --- | --- | --- | --- |
-| `STRAIGHT_B_BASE_PWM` | `626` | 有效 | B 电机，即当前左轮，直行基础 PWM |
+| `STRAIGHT_B_BASE_PWM` | `628` | 有效 | B 电机，即当前左轮，直行基础 PWM |
 | `STRAIGHT_A_BASE_PWM` | `633` | 有效 | A 电机，即当前右轮，直行基础 PWM |
 | `STRAIGHT_MIN_PWM` | `0` | 有效 | 直行闭环输出最小 PWM |
 | `STRAIGHT_MAX_PWM` | `870` | 有效 | 直行闭环输出最大 PWM |
@@ -192,8 +192,8 @@
 | --- | --- | --- | --- |
 | `TASK1_DISTANCE_CORR_DIVISOR` | `16` | 有效 | 左右编码器距离差转修正量分母 |
 | `TASK1_DISTANCE_CORR_MAX` | `45` | 有效 | 距离差修正限幅 |
-| `TASK1_HEADING_CORR_DIVISOR` | `22` | 有效 | 航向误差转修正量分母 |
-| `TASK1_HEADING_CORR_MAX` | `36` | 有效 | 航向修正限幅 |
+| `TASK1_HEADING_CORR_DIVISOR` | `12` | 有效 | 航向误差转修正量分母 |
+| `TASK1_HEADING_CORR_MAX` | `90` | 有效 | 航向修正限幅 |
 | `TASK1_HEADING_CORR_SIGN` | `-1` | 有效 | 航向修正方向符号 |
 | `TASK1_HEADING_FILTER_DIVISOR` | `5` | 有效 | 航向一阶低通分母 |
 | `TASK1_HEADING_WOBBLE_FILTER_DIVISOR` | `8` | 有效 | 晃动时更慢低通分母 |
@@ -219,9 +219,9 @@ Task2 当前混合了 A-B 直行、B-C 弧线、C-D 直行、D-A 弧线，以及
 | `TASK2_DUMP_LINE_DELAY_MS` | `40` | 条件有效 | Task2 dump 行间延时 |
 | `TASK2_STRAIGHT_RAM_LOG_PERIOD_MS` | `40` | 条件有效 | Task2 直行段 RAM log 周期 |
 | `TASK2_CD_STRAIGHT_TARGET_CDEG` | `18150` | 有效 | Task2 CD 直行固定航向目标 |
-| `TASK2_CD_HEADING_CORR_DIVISOR` | `8` | 有效 | CD 航向修正分母 |
-| `TASK2_CD_HEADING_CORR_MAX` | `95` | 有效 | CD 航向修正限幅 |
-| `TASK2_CD_HEADING_GYRO_DAMP_DIVISOR` | `1000` | 有效 | CD 航向修正角速度阻尼 |
+| `TASK2_CD_HEADING_CORR_DIVISOR` | `5` | 有效 | CD 航向修正分母 |
+| `TASK2_CD_HEADING_CORR_MAX` | `160` | 有效 | CD 航向修正限幅 |
+| `TASK2_CD_HEADING_GYRO_DAMP_DIVISOR` | `700` | 有效 | CD 航向修正角速度阻尼 |
 | `COUNTS_PER_CM` | `66` | 有效 | 编码器计数到厘米的换算系数，Task2/Task3 派生距离依赖 |
 | `TASK2_ARC_RADIUS_CM` | `40` | 有效 | Task2 弧线半径，参与弧长计算 |
 | `TASK2_ARC_RADIUS_MM` | `400` | 被旧代码引用但当前任务确认不生效 | 旧 Task2 弧线模型半径毫米值，**可删除** |
@@ -258,8 +258,8 @@ Task2 当前混合了 A-B 直行、B-C 弧线、C-D 直行、D-A 弧线，以及
 | `TASK2_ARC_REPORT_PERIOD_MS` | `40` | 有效 | Task2 弧线打印周期 |
 | `TASK2_AB_DISTANCE_CORR_DIVISOR` | `20` | 有效 | AB 直行距离修正分母 |
 | `TASK2_AB_DISTANCE_CORR_MAX` | `65` | 有效 | AB 直行距离修正限幅 |
-| `TASK2_AB_HEADING_CORR_DIVISOR` | `13` | 有效 | AB 直行航向修正分母 |
-| `TASK2_AB_HEADING_CORR_MAX` | `58` | 有效 | AB 直行航向修正限幅 |
+| `TASK2_AB_HEADING_CORR_DIVISOR` | `5` | 有效 | AB 直行航向修正分母 |
+| `TASK2_AB_HEADING_CORR_MAX` | `160` | 有效 | AB 直行航向修正限幅 |
 | `TASK2_AB_HEADING_DEADBAND_CDEG` | `25` | 有效 | AB 直行航向死区 |
 | `TASK2_AB_BIAS_CORRECTION` | `-10` | 有效 | AB 直行经验偏置修正 |
 | `TASK2_AB_STOP_MASK` | `0xFFU` | 有效 | AB 终点红外掩码 |
@@ -299,7 +299,7 @@ Task2 无引用项已在“当前完全无源码引用宏”章节列出。`TASK
 | `STRAIGHT_PID_KI` | `2` | 有效 | 直行速度差 PID 的 I 系数 |
 | `STRAIGHT_PID_KD` | `6` | 有效 | 直行速度差 PID 的 D 系数 |
 | `STRAIGHT_I_LIMIT` | `180` | 有效 | 默认积分限幅 |
-| `STRAIGHT_CORR_MAX` | `80` | 有效 | 默认修正限幅 |
+| `STRAIGHT_CORR_MAX` | `140` | 有效 | 默认修正限幅 |
 | `STRAIGHT_TARGET_SPEED_DIFF` | `0` | 有效 | 默认目标速度差，`B_spd - A_spd` |
 | `PID_TEST_TARGET_SPEED_DIFF` | `0` | 条件有效 | 05 PID 调试目标速度差 |
 | `PID_TEST_I_LIMIT` | `600` | 条件有效 | 05 PID 调试积分限幅 |
@@ -434,23 +434,23 @@ Task3 中 `TASK3_BAC_THEORY_CDEG`、`TASK3_AC_TANGENT_CORR_CDEG`、`TASK3_BD_REL
 | `TASK11_LINE_ERROR_FILTER_DIVISOR` | `2` | 被旧代码引用但当前任务确认不生效 | 旧红外误差滤波分母，**可删除** |
 | `TASK11_LINE_LOST_BASE_DROP` | `60` | 被旧代码引用但当前任务确认不生效 | 旧丢线基础 PWM 降低量，**可删除** |
 | `TASK11_LINE_LOST_TURN` | `150` | 被旧代码引用但当前任务确认不生效 | 旧丢线维持/恢复转向量，**可删除** |
-| `TASK11_STRAIGHT_BASE_PWM` | `TASK11_LINE_BASE_PWM` | 有效 | Task11 直线基础 PWM |
+| `TASK11_STRAIGHT_BASE_PWM` | `600` | 有效 | Task11 直线基础 PWM |
 | `TASK11_STRAIGHT_TARGET_DIFF` | `0` | 有效 | Task11 直线目标差速 |
 | `TASK11_STRAIGHT_GYRO_NAV_ENABLE` | `1` | 有效 | Task11 直线启用陀螺航向辅助 |
-| `TASK11_STRAIGHT_IR_ASSIST_ENABLE` | `1` | 有效 | Task11 直线启用红外辅助 |
+| `TASK11_STRAIGHT_IR_ASSIST_ENABLE` | `0` | 有效 | Task11 直线启用红外辅助 |
 | `TASK11_STRAIGHT_HEADING_CORR_DIVISOR` | `8` | 有效 | Task11 直线航向修正分母 |
 | `TASK11_STRAIGHT_HEADING_CORR_MAX` | `140` | 有效 | Task11 直线航向修正限幅 |
 | `TASK11_STRAIGHT_GYRO_DAMP_DIVISOR` | `1600` | 有效 | Task11 直线角速度阻尼分母 |
 | `TASK11_ARC_BASE_PWM` | `540` | 有效 | Task11 弧线基础 PWM |
 | `TASK11_ARC_ENTRY_COUNT` | `TASK3_ARC_ENTRY_COUNT` | 有效 | Task11 入弧阶段距离阈值 |
-| `TASK11_CB_ARC_ENTRY_TARGET_DIFF` | `-44` | 有效 | CB 入弧目标差速 |
-| `TASK11_CB_ARC_CRUISE_TARGET_DIFF` | `-44` | 有效 | CB 巡航目标差速 |
-| `TASK11_DA_ARC_ENTRY_TARGET_DIFF` | `42` | 有效 | DA 入弧目标差速 |
-| `TASK11_DA_ARC_CRUISE_TARGET_DIFF` | `42` | 有效 | DA 巡航目标差速 |
-| `TASK11_ARC_YAW_NAV_ENABLE` | `1` | 有效 | Task11 弧线启用航向辅助 |
+| `TASK11_CB_ARC_ENTRY_TARGET_DIFF` | `-48` | 有效 | CB 入弧目标差速 |
+| `TASK11_CB_ARC_CRUISE_TARGET_DIFF` | `-48` | 有效 | CB 巡航目标差速 |
+| `TASK11_DA_ARC_ENTRY_TARGET_DIFF` | `46` | 有效 | DA 入弧目标差速 |
+| `TASK11_DA_ARC_CRUISE_TARGET_DIFF` | `46` | 有效 | DA 巡航目标差速 |
+| `TASK11_ARC_YAW_NAV_ENABLE` | `0` | 有效 | Task11 弧线启用航向辅助 |
 | `TASK11_ARC_YAW_CORR_DIVISOR` | `260` | 有效 | Task11 弧线航向修正分母 |
 | `TASK11_ARC_YAW_CORR_MAX` | `45` | 有效 | Task11 弧线航向修正限幅 |
-| `TASK11_ARC_GYRO_DAMP_DIVISOR` | `2200` | 有效 | Task11 弧线角速度阻尼分母 |
+| `TASK11_ARC_GYRO_DAMP_DIVISOR` | `4400` | 有效 | Task11 弧线角速度阻尼分母 |
 | `TASK11_DIFF_KP` | `PD_TEST_KP` | 有效 | Task11 差速 P 系数 |
 | `TASK11_DIFF_KD` | `PD_TEST_KD` | 有效 | Task11 差速 D 系数 |
 | `TASK11_DIFF_FF_GAIN` | `2` | 有效 | Task11 差速前馈增益 |
@@ -472,16 +472,16 @@ Task3 中 `TASK3_BAC_THEORY_CDEG`、`TASK3_AC_TANGENT_CORR_CDEG`、`TASK3_BD_REL
 | `TASK11_TURN_YAW_STOP_TOL_CDEG` | `260` | 有效 | 出口转向航向停车容差 |
 | `TASK11_TURN_YAW_SLOW_ZONE_CDEG` | `900` | 有效 | 航向接近目标时进入慢速区 |
 | `TASK11_TURN_YAW_STOP_GZLP_TOL_MDPS` | `14000` | 有效 | 航向停车时角速度容差 |
-| `TASK11_B_EXIT_TARGET_CDEG` | `TASK3_BD_HEADING_TARGET_CDEG` | 有效 | B 点出口目标航向 |
-| `TASK11_A_EXIT_TARGET_CDEG` | `TASK3_AC_HEADING_TARGET_CDEG` | 有效 | A 点出口目标航向 |
+| `TASK11_B_EXIT_TARGET_CDEG` | `TASK11_BD_HEADING_TARGET_CDEG` | 有效 | B 点出口目标航向 |
+| `TASK11_A_EXIT_TARGET_CDEG` | `TASK11_AC_HEADING_TARGET_CDEG` | 有效 | A 点出口目标航向 |
 | `TASK11_TURN_CENTER6_ERROR_MAX` | `1500` | 有效 | 转向后中心 6 路允许误差 |
 | `TASK11_TURN_CENTER4_ERROR_MAX` | `1000` | 有效 | 转向后中心 4 路允许误差 |
-| `TASK11_POINT_ADVANCE_COUNT` | `400` | 有效 | 点位后前进距离 |
-| `TASK11_ARC_POINT_ADVANCE_COUNT` | `400` | 有效 | 弧线点位后前进距离 |
+| `TASK11_POINT_ADVANCE_COUNT` | `300` | 有效 | 点位后前进距离 |
+| `TASK11_ARC_POINT_ADVANCE_COUNT` | `800` | 有效 | 弧线点位后前进距离 |
 | `TASK11_POINT_ADVANCE_PWM` | `360` | 有效 | 点位后前进 PWM |
 | `TASK11_POINT_ADVANCE_TIMEOUT_MS` | `800` | 有效 | 点位后前进超时 |
-| `TASK11_AC_POINT_ARM_COUNT` | `8000` | 有效 | AC 直线点位 arm count |
-| `TASK11_BD_POINT_ARM_COUNT` | `7800` | 有效 | BD 直线点位 arm count |
+| `TASK11_AC_POINT_ARM_COUNT` | `7300` | 有效 | AC 直线点位 arm count |
+| `TASK11_BD_POINT_ARM_COUNT` | `7300` | 有效 | BD 直线点位 arm count |
 | `TASK11_STRAIGHT_FORCE_COUNT` | `12800` | 有效 | Task11 直线强制停止距离 |
 | `TASK11_STRAIGHT_POINT_ERROR_MIN` | `1200` | 有效 | 直线点位红外误差阈值 |
 | `TASK11_STRAIGHT_POINT_WIDE_COUNT` | `3` | 有效 | 直线点位宽线黑线数量阈值 |
@@ -497,6 +497,40 @@ Task3 中 `TASK3_BAC_THEORY_CDEG`、`TASK3_AC_TANGENT_CORR_CDEG`、`TASK3_BD_REL
 | `TASK11_ALIGN_SLOW_PWM` | `150` | 被旧代码引用但当前任务确认不生效 | 旧 Task11 对准慢速 PWM，**可删除** |
 | `TASK11_ALIGN_SLOW_ZONE_CDEG` | `900` | 被旧代码引用但当前任务确认不生效 | 旧 Task11 对准慢速区角度，**可删除** |
 | `TASK11_ALIGN_GZLP_TOL_MDPS` | `8000` | 被旧代码引用但当前任务确认不生效 | 旧 Task11 对准角速度稳定阈值，**可删除** |
+
+
+## 2026-06-08 commit 0199d70 新增和变更的宏
+
+以下宏在最近一次提交中新增或发生值变更。
+
+### 新增宏
+
+| 宏 | 当前值 | 状态 | 作用 |
+| --- | --- | --- | --- |
+| `TASK11_RAM_WINDOW_AFTER_START_COUNT` | `1800` | 条件有效 | Task11 窗口日志在段启动后也记录的距离 |
+| `TASK11_STRAIGHT_IR_ASSIST_ENABLE` | `0` | 有效 | Task11 直线段红外辅助开关，当前关闭 |
+| `TASK11_STRAIGHT_IR_ASSIST_DIVISOR` | `3` | 有效 | Task11 直线红外辅助转向分母 |
+| `TASK11_AC_HEADING_TARGET_CDEG` | `-50` | 有效 | Task11 专用 AC 航向目标（原复用 Task3） |
+| `TASK11_BD_HEADING_TARGET_CDEG` | `-10638` | 有效 | Task11 专用 BD 航向目标（原复用 Task3） |
+| `TASK11_GYRO_TURN_TIMEOUT_MS` | `1200` | 有效 | 陀螺仪转向超时 |
+| `TASK11_EXIT_LEFT_TURN_B_PWM` | `80` | 有效 | B 点出口左转 B 电机 PWM |
+| `TASK11_EXIT_LEFT_TURN_A_PWM` | `440` | 有效 | B 点出口左转 A 电机 PWM |
+| `TASK11_EXIT_LEFT_TURN_SLOW_B_PWM` | `60` | 有效 | B 点出口慢速左转 B 电机 PWM |
+| `TASK11_EXIT_LEFT_TURN_SLOW_A_PWM` | `300` | 有效 | B 点出口慢速左转 A 电机 PWM |
+| `TASK11_EXIT_RIGHT_TURN_B_PWM` | `440` | 有效 | A 点出口右转 B 电机 PWM |
+| `TASK11_EXIT_RIGHT_TURN_A_PWM` | `80` | 有效 | A 点出口右转 A 电机 PWM |
+| `TASK11_EXIT_RIGHT_TURN_SLOW_B_PWM` | `300` | 有效 | A 点出口慢速右转 B 电机 PWM |
+| `TASK11_EXIT_RIGHT_TURN_SLOW_A_PWM` | `60` | 有效 | A 点出口慢速右转 A 电机 PWM |
+
+### 功能变更
+
+- **任务三/四入口改走 Task11 路径**：`run_task_dispatcher()` 中任务三改调 `run_task11_ir_map_test_laps(1U)`，任务四改调 `run_task11_ir_map_test_laps(4U)`。不再走 `run_task3_acbda()`/`run_task4_four_laps()`。
+- **B/A 点出口转向从红外改为陀螺仪**：`task11_sensor_fast_turn` 改为 `task11_gyro_turn_to_yaw`，使用绝对航向目标停止。
+- **Task11 使用独立航向目标**：`TASK11_AC_HEADING_TARGET_CDEG=-50`、`TASK11_BD_HEADING_TARGET_CDEG=-10638`，不再复用 `TASK3_AC/BD_HEADING_TARGET_CDEG`。
+- **弧线点位判定简化**：CB/DA 弧线点位从边线+航向判定改为 `line_lost_seen` 判定。
+- **直线点位判定放宽**：从 `edge_point_seen` 改为 `line_valid`。
+- **新增 `task11_gyro_turn_to_yaw()`**：陀螺仪绝对航向转向函数，支持快/慢速 PWM 和过零检测。
+- **任务十改为持续航向监控**：`run_task10_ab_zero_test()` 从单次检查改为 200ms 周期持续打印航向。
 
 ## 整理建议
 
