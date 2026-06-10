@@ -133,7 +133,7 @@ Task11 风格弧线和采集：
 
 ### 任务一
 
-`TASK1_AB` 使用 `run_task5_straight_to_line_segment()`：
+`TASK1_AB` 使用 `run_straight_to_line_segment()`：
 
 1. A 点启动，声光提示。
 2. 可选 JY62 当前航向置零。

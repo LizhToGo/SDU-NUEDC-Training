@@ -43,15 +43,15 @@ C:\Users\orang\Desktop\task11_run_001.txt
 
 | 文件 | 内容 |
 | --- | --- |
-| `task11_experience_data.csv` | 全部重建后的 `TASK11_*` 原始记录，适合做细粒度分析。 |
-| `task11_experience_runs.csv` | 每次 Task11 运行一行总览，包括完整性、总记录数、完成状态、主要配置。 |
-| `task11_experience_segments.csv` | 每次运行的 `TASK11_SUM` 分段摘要，通常每 5 圈为 20 行。 |
-| `task11_experience_turns.csv` | 每次运行的转向事件摘要，记录转向前角度、转向后角度、转过角度、转向距离。 |
-| `task11_experience_summary.txt` | 人类可读的 summary 文本，会追加每次运行的校验和关键统计。 |
+| `data/task11_experience_data.csv` | 全部重建后的 `TASK11_*` 原始记录，适合做细粒度分析。 |
+| `data/task11_experience_runs.csv` | 每次 Task11 运行一行总览，包括完整性、总记录数、完成状态、主要配置。 |
+| `data/task11_experience_segments.csv` | 每次运行的 `TASK11_SUM` 分段摘要，通常每 5 圈为 20 行。 |
+| `data/task11_experience_turns.csv` | 每次运行的转向事件摘要，记录转向前角度、转向后角度、转过角度、转向距离。 |
+| `data/task11_experience_summary.txt` | 人类可读的 summary 文本，会追加每次运行的校验和关键统计。 |
 
 这些文件属于本地经验数据导出物，当前 `.gitignore` 已加入 root 和 `data/` 下的 `task11_experience_*` 规则。若某些文件已经被 Git 跟踪，`.gitignore` 不会自动取消跟踪，需要另行决定是否用 `git rm --cached` 从仓库索引中移除。
 
-如果想把输出集中放到 `data/` 目录，推荐使用：
+脚本默认会把输出集中放到 `data/` 目录；如果想显式指定路径，可以使用：
 
 ```powershell
 & "C:\Users\orang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" tools\task11_log_to_csv.py "C:\Users\orang\Desktop\task11_run_001.txt" `
@@ -112,8 +112,8 @@ task11_f1a18e8ccac2
 3. 等待串口完整输出到 `TASK11_RAM_END`。
 4. 保存串口接收文本。
 5. 运行本脚本导入日志。
-6. 查看 `task11_experience_summary.txt`，确认 `validation_ok=1`。
-7. 使用 `task11_experience_segments.csv` 和 `task11_experience_turns.csv` 统计多次实验数据。
+6. 查看 `data/task11_experience_summary.txt`，确认 `validation_ok=1`。
+7. 使用 `data/task11_experience_segments.csv` 和 `data/task11_experience_turns.csv` 统计多次实验数据。
 
 ## 判断日志是否可用
 

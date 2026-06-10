@@ -5,6 +5,7 @@
 
 #include "app_config.h"
 #include "app_control.h"
+#include "app_motion_utils.h"
 
 typedef struct {
     int32_t base_b_pwm;
@@ -85,7 +86,7 @@ static inline void straight_drive_update(straight_pid_t *pid,
     out->motor_b_speed = abs_i32(motor_b_delta);
     out->motor_a_speed = abs_i32(motor_a_delta);
     out->speed_diff = out->motor_b_speed - out->motor_a_speed;
-    out->distance_count = (abs_i32(motor_b_total) + abs_i32(motor_a_total)) / 2;
+    out->distance_count = motion_distance_count(motor_b_total, motor_a_total);
     out->distance_error = motor_b_total - motor_a_total;
     out->feedforward_correction = straight_drive_feedforward(config);
     out->feedback_correction = straight_pid_update(pid,

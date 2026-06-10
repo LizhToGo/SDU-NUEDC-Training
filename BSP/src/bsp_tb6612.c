@@ -144,30 +144,3 @@ void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
     TB6612_SetMotor(TB6612_MOTOR_B, left_speed);
     TB6612_SetMotor(TB6612_MOTOR_A, right_speed);
 }
-
-void TB6612_Motor_Stop(void)
-{
-    TB6612_Brake();
-}
-
-void AO_Control(uint8_t dir, uint32_t speed)
-{
-    if ((speed > TB6612_PWM_MAX) || (dir > 1U)) {
-        lc_printf("\r\nAO_Control parameter error\r\n");
-        return;
-    }
-
-    TB6612_SetDirection(TB6612_MOTOR_A, dir);
-    TB6612_SetPwm(TB6612_MOTOR_A, speed);
-}
-
-void BO_Control(uint8_t dir, uint32_t speed)
-{
-    if ((speed > TB6612_PWM_MAX) || (dir > 1U)) {
-        lc_printf("\r\nBO_Control parameter error\r\n");
-        return;
-    }
-
-    TB6612_SetDirection(TB6612_MOTOR_B, dir);
-    TB6612_SetPwm(TB6612_MOTOR_B, speed);
-}

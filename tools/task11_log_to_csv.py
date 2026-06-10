@@ -636,27 +636,27 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "-o",
         "--output",
-        default="task11_experience_data.csv",
-        help="Cumulative raw-record CSV path. Default: task11_experience_data.csv",
+        default="data/task11_experience_data.csv",
+        help="Cumulative raw-record CSV path. Default: data/task11_experience_data.csv",
     )
     parser.add_argument(
         "--runs-output",
-        default="task11_experience_runs.csv",
+        default="data/task11_experience_runs.csv",
         help="Cumulative one-row-per-run summary CSV.",
     )
     parser.add_argument(
         "--segments-output",
-        default="task11_experience_segments.csv",
+        default="data/task11_experience_segments.csv",
         help="Cumulative TASK11_SUM segment CSV.",
     )
     parser.add_argument(
         "--turns-output",
-        default="task11_experience_turns.csv",
+        default="data/task11_experience_turns.csv",
         help="Cumulative turn-start/turn-stop summary CSV.",
     )
     parser.add_argument(
         "--summary",
-        default="task11_experience_summary.txt",
+        default="data/task11_experience_summary.txt",
         help="Cumulative human-readable summary log.",
     )
     parser.add_argument(

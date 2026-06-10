@@ -56,9 +56,4 @@ void TB6612_Coast(void);
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed);
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed);
 
-/* 兼容旧例程的接口：dir=1 正转，dir=0 反转。 */
-void TB6612_Motor_Stop(void);
-void AO_Control(uint8_t dir, uint32_t speed);
-void BO_Control(uint8_t dir, uint32_t speed);
-
 #endif /* 结束 _BSP_TB6612_H 头文件保护 */
