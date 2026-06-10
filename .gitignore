@@ -51,3 +51,6 @@ opencode.json
 /task11_experience_summary.txt
 /data/task11_experience_*.csv
 /data/task11_experience_summary.txt
+
+#ai审查代码输出
+result.md

@@ -7,151 +7,192 @@
 #include "board.h"
 #include "bsp_tb6612.h"
 
+/*
+ * UART0 accepts two command styles:
+ * - binary bytes: 0x01..0x07, 0x10, 0x11
+ * - ASCII decimal pairs: "01".."07", "10", "11", optionally prefixed with 't'
+ * Byte 0x00 is treated as STOP only when allow_binary_stop is enabled.
+ */
+typedef struct {
+    uint8_t value;
+    task_id_t task_id;
+} task_uart_command_map_t;
+
+typedef struct {
+    uint8_t frame_buf[3];
+    uint8_t frame_len;
+} task_uart_parse_state_t;
+
+static const task_uart_command_map_t g_task_uart_number_map[] = {
+    {0U, TASK_ID_STOP},
+    {1U, TASK_ID_1},
+    {2U, TASK_ID_2},
+    {3U, TASK_ID_3},
+    {4U, TASK_ID_4},
+    {5U, TASK_ID_5},
+    {6U, TASK_ID_6},
+    {7U, TASK_ID_7},
+    {10U, TASK_ID_10},
+    {11U, TASK_ID_11},
+};
+
+static const task_uart_command_map_t g_task_uart_binary_map[] = {
+    {0x01U, TASK_ID_1},
+    {0x02U, TASK_ID_2},
+    {0x03U, TASK_ID_3},
+    {0x04U, TASK_ID_4},
+    {0x05U, TASK_ID_5},
+    {0x06U, TASK_ID_6},
+    {0x07U, TASK_ID_7},
+    {0x10U, TASK_ID_10},
+    {0x11U, TASK_ID_11},
+};
+
+static task_id_t task_uart_lookup_command(
+    const task_uart_command_map_t *map,
+    uint32_t map_len,
+    uint8_t value)
+{
+    uint32_t i;
+
+    for (i = 0U; i < map_len; i++) {
+        if (map[i].value == value) {
+            return map[i].task_id;
+        }
+    }
+
+    return TASK_ID_NONE;
+}
+
+static void task_uart_parse_reset(task_uart_parse_state_t *state)
+{
+    state->frame_len = 0U;
+}
+
+static uint8_t task_uart_is_terminator(uint8_t ch)
+{
+    return ((ch == '\r') || (ch == '\n') || (ch == ' ') || (ch == '\t')) ? 1U : 0U;
+}
+
+static uint8_t task_uart_is_prefix_wait(const task_uart_parse_state_t *state)
+{
+    return ((state->frame_len == 1U) &&
+        ((state->frame_buf[0] == 't') || (state->frame_buf[0] == 'T'))) ? 1U : 0U;
+}
+
+static task_id_t task_uart_finish_decimal(uint8_t tens, uint8_t ones)
+{
+    uint8_t value = (uint8_t)(((tens - '0') * 10U) + (ones - '0'));
+
+    return task_uart_command_from_number(value);
+}
+
 task_id_t task_uart_command_from_number(uint8_t number)
 {
-    switch (number) {
-    case 0:
-        return TASK_ID_STOP;
-    case 1:
-        return TASK_ID_1;
-    case 2:
-        return TASK_ID_2;
-    case 3:
-        return TASK_ID_3;
-    case 4:
-        return TASK_ID_4;
-    case 5:
-        return TASK_ID_5;
-    case 6:
-        return TASK_ID_6;
-    case 7:
-        return TASK_ID_7;
-    case 10:
-        return TASK_ID_10;
-    case 11:
-        return TASK_ID_11;
-    default:
-        return TASK_ID_NONE;
-    }
+    return task_uart_lookup_command(g_task_uart_number_map,
+        (uint32_t)(sizeof(g_task_uart_number_map) / sizeof(g_task_uart_number_map[0])),
+        number);
 }
 
 task_id_t task_uart_command_from_hex_byte(uint8_t value)
 {
-    switch (value) {
-    case 0x01U:
-        return TASK_ID_1;
-    case 0x02U:
-        return TASK_ID_2;
-    case 0x03U:
-        return TASK_ID_3;
-    case 0x04U:
-        return TASK_ID_4;
-    case 0x05U:
-        return TASK_ID_5;
-    case 0x06U:
-        return TASK_ID_6;
-    case 0x07U:
-        return TASK_ID_7;
-    case 0x10U:
-        return TASK_ID_10;
-    case 0x11U:
-        return TASK_ID_11;
-    default:
+    return task_uart_lookup_command(g_task_uart_binary_map,
+        (uint32_t)(sizeof(g_task_uart_binary_map) / sizeof(g_task_uart_binary_map[0])),
+        value);
+}
+
+static task_id_t task_uart_parse_control_byte(task_uart_parse_state_t *state,
+    uint8_t ch)
+{
+    task_id_t command;
+
+    command = task_uart_command_from_hex_byte(ch);
+    if (command != TASK_ID_NONE) {
+        task_uart_parse_reset(state);
+        return command;
+    }
+
+    if ((ch >= 0x01U) && (ch <= 0x1FU)) {
+        task_uart_parse_reset(state);
+    }
+
+    return TASK_ID_NONE;
+}
+
+static task_id_t task_uart_parse_decimal_digit(task_uart_parse_state_t *state,
+    uint8_t ch)
+{
+    if (state->frame_len == 0U) {
+        state->frame_buf[0] = ch;
+        state->frame_len = 1U;
         return TASK_ID_NONE;
     }
+
+    if (task_uart_is_prefix_wait(state) != 0U) {
+        state->frame_buf[1] = ch;
+        state->frame_len = 2U;
+        return TASK_ID_NONE;
+    }
+
+    if (state->frame_len == 1U) {
+        task_id_t command = task_uart_finish_decimal(state->frame_buf[0], ch);
+        task_uart_parse_reset(state);
+        return command;
+    }
+
+    if ((state->frame_len == 2U) &&
+        ((state->frame_buf[0] == 't') || (state->frame_buf[0] == 'T'))) {
+        task_id_t command = task_uart_finish_decimal(state->frame_buf[1], ch);
+        task_uart_parse_reset(state);
+        return command;
+    }
+
+    state->frame_buf[0] = ch;
+    state->frame_len = 1U;
+    return TASK_ID_NONE;
+}
+
+static task_id_t task_uart_parse_byte(task_uart_parse_state_t *state,
+    uint8_t ch,
+    uint8_t allow_binary_stop)
+{
+    if (ch == 0x00U) {
+        task_uart_parse_reset(state);
+        return (allow_binary_stop != 0U) ? TASK_ID_STOP : TASK_ID_NONE;
+    }
+
+    if (task_uart_is_terminator(ch) != 0U) {
+        if (task_uart_is_prefix_wait(state) != 0U) {
+            return TASK_ID_NONE;
+        }
+        task_uart_parse_reset(state);
+        return TASK_ID_NONE;
+    }
+
+    if ((ch < '0') || (ch > '9')) {
+        if ((ch == 't') || (ch == 'T')) {
+            state->frame_buf[0] = ch;
+            state->frame_len = 1U;
+            return TASK_ID_NONE;
+        }
+
+        return task_uart_parse_control_byte(state, ch);
+    }
+
+    return task_uart_parse_decimal_digit(state, ch);
 }
 
 task_id_t task_uart_read_command(uint8_t allow_binary_stop)
 {
-    static uint8_t frame_buf[3] = {0U};
-    static uint8_t frame_len = 0U;
+    static task_uart_parse_state_t parse_state = {{0U, 0U, 0U}, 0U};
 
     while (DL_UART_Main_isRXFIFOEmpty(UART_0_INST) == false) {
         uint8_t ch = DL_UART_Main_receiveData(UART_0_INST);
+        task_id_t command = task_uart_parse_byte(&parse_state, ch, allow_binary_stop);
 
-        if (ch == 0x00U) {
-            frame_len = 0U;
-            if (allow_binary_stop != 0U) {
-                return TASK_ID_STOP;
-            }
-            continue;
+        if (command != TASK_ID_NONE) {
+            return command;
         }
-
-        if ((ch == '\r') || (ch == '\n') || (ch == ' ') || (ch == '\t')) {
-            if ((frame_len == 1U) &&
-                ((frame_buf[0] == 't') || (frame_buf[0] == 'T'))) {
-                continue;
-            }
-            frame_len = 0U;
-            continue;
-        }
-
-        {
-            task_id_t command = task_uart_command_from_hex_byte(ch);
-            if (command != TASK_ID_NONE) {
-                frame_len = 0U;
-                return command;
-            }
-        }
-
-        if ((ch >= 0x01U) && (ch <= 0x1FU)) {
-            frame_len = 0U;
-            continue;
-        }
-
-        if ((ch == 't') || (ch == 'T')) {
-            frame_buf[0] = ch;
-            frame_len = 1U;
-            continue;
-        }
-
-        if ((ch >= '0') && (ch <= '9')) {
-            if (frame_len == 0U) {
-                frame_buf[0] = ch;
-                frame_len = 1U;
-                continue;
-            }
-
-            if ((frame_len == 1U) &&
-                ((frame_buf[0] == 't') || (frame_buf[0] == 'T'))) {
-                frame_buf[1] = ch;
-                frame_len = 2U;
-                continue;
-            }
-
-            if (frame_len == 1U) {
-                task_id_t command;
-                uint8_t value = (uint8_t)(((frame_buf[0] - '0') * 10U) +
-                    (ch - '0'));
-
-                command = task_uart_command_from_number(value);
-                frame_len = 0U;
-                if (command != TASK_ID_NONE) {
-                    return command;
-                }
-                continue;
-            }
-
-            if ((frame_len == 2U) &&
-                ((frame_buf[0] == 't') || (frame_buf[0] == 'T'))) {
-                task_id_t command;
-                uint8_t value = (uint8_t)(((frame_buf[1] - '0') * 10U) +
-                    (ch - '0'));
-
-                command = task_uart_command_from_number(value);
-                frame_len = 0U;
-                if (command != TASK_ID_NONE) {
-                    return command;
-                }
-                continue;
-            }
-
-            frame_buf[0] = ch;
-            frame_len = 1U;
-            continue;
-        }
-
-        frame_len = 0U;
     }
 
     return TASK_ID_NONE;
