@@ -53,23 +53,36 @@ static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
 }
 
 /* B 电机编码器发生 GPIO 中断时调用。 */
+static void encoder_update_motor(volatile int32_t *count,
+    volatile uint8_t *state,
+    uint32_t pin_a,
+    uint32_t pin_b,
+    int32_t forward_sign)
+{
+    uint8_t current = encoder_read_state(pin_a, pin_b);
+    int8_t delta = encoder_decode_delta(*state, current);
+
+    *state = current;
+    *count += ((int32_t)delta * forward_sign);
+}
+
 static void encoder_update_motor_b(void)
 {
-    uint8_t current = encoder_read_state(ENCODER_MOTOR_B_A_PIN, ENCODER_MOTOR_B_B_PIN);
-    int8_t delta = encoder_decode_delta(g_motor_b_encoder_state, current);
-
-    g_motor_b_encoder_state = current;
-    g_motor_b_encoder_count += ((int32_t)delta * ENCODER_MOTOR_B_FORWARD_SIGN);
+    encoder_update_motor(&g_motor_b_encoder_count,
+        &g_motor_b_encoder_state,
+        ENCODER_MOTOR_B_A_PIN,
+        ENCODER_MOTOR_B_B_PIN,
+        ENCODER_MOTOR_B_FORWARD_SIGN);
 }
 
 /* A 电机编码器发生 GPIO 中断时调用。 */
 static void encoder_update_motor_a(void)
 {
-    uint8_t current = encoder_read_state(ENCODER_MOTOR_A_A_PIN, ENCODER_MOTOR_A_B_PIN);
-    int8_t delta = encoder_decode_delta(g_motor_a_encoder_state, current);
-
-    g_motor_a_encoder_state = current;
-    g_motor_a_encoder_count += ((int32_t)delta * ENCODER_MOTOR_A_FORWARD_SIGN);
+    encoder_update_motor(&g_motor_a_encoder_count,
+        &g_motor_a_encoder_state,
+        ENCODER_MOTOR_A_A_PIN,
+        ENCODER_MOTOR_A_B_PIN,
+        ENCODER_MOTOR_A_FORWARD_SIGN);
 }
 
 /* 在开启 GPIO 中断前读取编码器初始状态。 */
@@ -99,6 +112,14 @@ static void encoder_enable_interrupts(void)
  * 返回距离上一次调用以来的编码器计数增量。
  * 读取 volatile 计数器时会短暂关中断，避免读到一半被中断打断。
  */
+static void encoder_snapshot_counts(int32_t *motor_b_count, int32_t *motor_a_count)
+{
+    __disable_irq();
+    *motor_b_count = g_motor_b_encoder_count;
+    *motor_a_count = g_motor_a_encoder_count;
+    __enable_irq();
+}
+
 static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
     static int32_t last_motor_b_count;
@@ -106,10 +127,7 @@ static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_de
     int32_t motor_b_count;
     int32_t motor_a_count;
 
-    __disable_irq();
-    motor_b_count = g_motor_b_encoder_count;
-    motor_a_count = g_motor_a_encoder_count;
-    __enable_irq();
+    encoder_snapshot_counts(&motor_b_count, &motor_a_count);
 
     *motor_b_delta = motor_b_count - last_motor_b_count;
     *motor_a_delta = motor_a_count - last_motor_a_count;
@@ -119,10 +137,7 @@ static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_de
 
 static void encoder_get_total_counts(int32_t *motor_b_total, int32_t *motor_a_total)
 {
-    __disable_irq();
-    *motor_b_total = g_motor_b_encoder_count;
-    *motor_a_total = g_motor_a_encoder_count;
-    __enable_irq();
+    encoder_snapshot_counts(motor_b_total, motor_a_total);
 }
 
 static void encoder_reset_distance_counts(void)

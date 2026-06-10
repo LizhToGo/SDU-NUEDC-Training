@@ -11,9 +11,11 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import os
 import re
 import statistics
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -21,6 +23,7 @@ from typing import Iterable
 
 TIMESTAMP_RE = re.compile(r"^\[[^\]]+\]:\s*")
 KEYVAL_RE = re.compile(r"(\w+)=([^\s]+)")
+CSV_ENCODING = "utf-8-sig"
 
 PREFERRED_COLUMNS = [
     "run_id",
@@ -429,9 +432,30 @@ def csv_columns(rows: list[dict[str, str]]) -> list[str]:
 def read_csv_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     if not path.exists():
         return [], []
-    with path.open("r", newline="", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
-        return list(reader), list(reader.fieldnames or [])
+    try:
+        with path.open("r", newline="", encoding=CSV_ENCODING) as file:
+            reader = csv.DictReader(file)
+            return list(reader), list(reader.fieldnames or [])
+    except OSError as exc:
+        raise OSError(f"failed to read CSV file {path}: {exc}") from exc
+    except csv.Error as exc:
+        raise ValueError(f"failed to parse CSV file {path}: {exc}") from exc
+
+
+def sanitize_csv_cell(value: object) -> object:
+    """Prevent spreadsheet formula execution while keeping numeric negatives usable."""
+
+    if not isinstance(value, str) or not value:
+        return value
+    if value[0] in {"=", "+", "@"}:
+        return "'" + value
+    if value[0] == "-" and (len(value) == 1 or not value[1].isdigit()):
+        return "'" + value
+    return value
+
+
+def sanitize_csv_row(row: dict[str, str], columns: list[str]) -> dict[str, object]:
+    return {key: sanitize_csv_cell(row.get(key, "")) for key in columns}
 
 
 def unique_backup_path(path: Path) -> Path:
@@ -448,10 +472,39 @@ def unique_backup_path(path: Path) -> Path:
 
 def write_csv_rows(rows: list[dict[str, str]], output_path: Path, columns: list[str]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    temp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            newline="",
+            encoding=CSV_ENCODING,
+            dir=output_path.parent,
+            delete=False,
+        ) as file:
+            temp_name = file.name
+            writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(sanitize_csv_row(row, columns) for row in rows)
+        os.replace(temp_name, output_path)
+    except OSError as exc:
+        raise OSError(f"failed to write CSV file {output_path}: {exc}") from exc
+    except csv.Error as exc:
+        raise ValueError(f"failed to format CSV file {output_path}: {exc}") from exc
+    finally:
+        if temp_name:
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def backup_csv_file(path: Path) -> Path:
+    backup_path = unique_backup_path(path)
+    try:
+        backup_path.write_bytes(path.read_bytes())
+    except OSError as exc:
+        raise OSError(f"failed to back up CSV file {path} to {backup_path}: {exc}") from exc
+    return backup_path
 
 
 def append_csv_rows(
@@ -484,14 +537,11 @@ def append_csv_rows(
             columns.append(key)
 
     if columns != existing_columns:
-        backup_path = unique_backup_path(output_path)
-        backup_path.write_bytes(output_path.read_bytes())
+        backup_csv_file(output_path)
         write_csv_rows(existing_rows + rows, output_path, columns)
         return
 
-    with output_path.open("a", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
-        writer.writerows(rows)
+    write_csv_rows(existing_rows + rows, output_path, columns)
 
 
 def existing_values(path: Path, column: str) -> set[str]:
@@ -507,7 +557,8 @@ def log_hash(records: list[str]) -> str:
 def source_mtime(path: Path) -> str:
     try:
         return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
-    except OSError:
+    except OSError as exc:
+        print(f"warning: failed to read source mtime for {path}: {exc}", file=sys.stderr)
         return ""
 
 
@@ -697,7 +748,12 @@ def main(argv: list[str]) -> int:
         else Path(args.summary)
     )
 
-    text = log_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"error: failed to read input log {log_path}: {exc}", file=sys.stderr)
+        return 2
+
     records = rebuild_task11_records(text)
     rows = records_to_rows(records)
     summary_lines, validation_ok = build_validation(rows)
@@ -712,11 +768,13 @@ def main(argv: list[str]) -> int:
         "log_hash": digest,
     }
 
-    if (
-        not args.replace
-        and not args.allow_duplicate
-        and run_id in existing_values(runs_output_path, "run_id")
-    ):
+    try:
+        already_imported = run_id in existing_values(runs_output_path, "run_id")
+    except (OSError, ValueError, csv.Error) as exc:
+        print(f"error: failed to check existing TASK11 runs: {exc}", file=sys.stderr)
+        return 2
+
+    if not args.replace and not args.allow_duplicate and already_imported:
         print(f"input={log_path}")
         print(f"run_id={run_id}")
         print("already_imported=1")
@@ -728,11 +786,15 @@ def main(argv: list[str]) -> int:
     segment_rows = add_metadata(by_type(rows, "TASK11_SUM"), metadata)
     turn_rows = build_turn_rows(rows, metadata)
 
-    append_csv_rows(record_rows, output_path, PREFERRED_COLUMNS, replace=args.replace)
-    append_csv_rows(run_rows, runs_output_path, RUN_COLUMNS, replace=args.replace)
-    append_csv_rows(segment_rows, segments_output_path, PREFERRED_COLUMNS, replace=args.replace)
-    append_csv_rows(turn_rows, turns_output_path, TURN_COLUMNS, replace=args.replace)
-    append_summary_text(summary_path, summary_lines, metadata, validation_ok, args.replace)
+    try:
+        append_csv_rows(record_rows, output_path, PREFERRED_COLUMNS, replace=args.replace)
+        append_csv_rows(run_rows, runs_output_path, RUN_COLUMNS, replace=args.replace)
+        append_csv_rows(segment_rows, segments_output_path, PREFERRED_COLUMNS, replace=args.replace)
+        append_csv_rows(turn_rows, turns_output_path, TURN_COLUMNS, replace=args.replace)
+        append_summary_text(summary_path, summary_lines, metadata, validation_ok, args.replace)
+    except (OSError, ValueError, csv.Error) as exc:
+        print(f"error: failed to write TASK11 outputs: {exc}", file=sys.stderr)
+        return 2
 
     print(f"input={log_path}")
     print(f"run_id={run_id}")
