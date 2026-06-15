@@ -7,13 +7,13 @@
 | 标记 | 含义 |
 | --- | --- |
 | 正式任务生效 | 当前 `ENABLE_CONTEST_TASKS=1` 时，任务 1/2/3/4 的实际调用链会用到 |
-| 调试任务生效 | 任务 5/6/7/10/11 或测试模式会用到，但不属于正式任务 1/2/3/4 主路径 |
+| 调试任务生效 | 任务 5/6/7/10 或测试模式会用到，但不属于正式任务 1/2/3/4 主路径 |
 | 条件编译生效 | 只有对应 `ENABLE_*`、`TASK*_LOG_ENABLE`、`TASK*_UART_LOG_ENABLE` 打开时才影响行为 |
 | 派生链生效 | 宏本身不在任务中直接出现，但用于计算另一个实际生效参数 |
 | 被旧代码引用但当前任务确认不生效（2026-06-08 codegraph 验证） | 宏出现在源码中，但全部位于已确认不可达的旧函数中（0 callers） |
 | 当前完全无源码引用 | 当前源码和派生链都没有使用，建议删除或迁移到历史说明文档 |
 
-当前默认路径为：`main()` 在 `ENABLE_CONTEST_TASKS=1` 下进入 `run_task_dispatcher()`。当前实际入口为：任务 1 走 `run_task1_ab()`，任务 2 走 `run_task2_abcd()`，任务 3 走 `run_task11_ir_map_test_laps(1U)`，任务 4 走 `run_task11_ir_map_test_laps(4U)`；任务 5/6/7/10/11 属于调试或专项验证入口。
+当前默认路径为：`main()` 在 `ENABLE_CONTEST_TASKS=1` 下进入 `run_task_dispatcher()`。当前实际入口为：任务 1 走 `run_task1_ab()`，任务 2 走 `run_task2_abcd()`，任务 3 走 `run_race_laps(1U)`，任务 4 走 `run_race_laps(4U)`；任务 5/6/7/10 属于调试或专项验证入口。UART `11` 入口已经移除，历史 `TASK11_*` 宏名目前仍作为任务三/四竞速流程的配置名保留。
 
 ## 总体情况
 
@@ -398,32 +398,34 @@ Task3 中 `TASK3_BAC_THEORY_CDEG`、`TASK3_AC_TANGENT_CORR_CDEG`、`TASK3_BD_REL
 | `TASK6_C_TURN_LINE_STOP_MASK` | `0x7EU` | 有效 | 快速转向停车红外掩码 |
 | `TASK6_C_TURN_LINE_STOP_MIN_COUNT` | `1` | 有效 | 快速转向停车所需黑线探头数 |
 
-## Task11 日志参数
+## 竞速日志参数（历史 `TASK11_*` 命名）
+
+当前 UART `11` 入口已经移除，但任务三/四的竞速流程由早期 Task11 经验采集流程演化而来，因此日志和运动配置宏仍保留 `TASK11_*` 前缀。判断这些宏是否有效时，应看它们是否被 `run_race_laps()` 和 `race_*` 调用链使用，而不是只看名称。
 
 | 宏 | 当前值 | 状态 | 作用 |
 | --- | --- | --- | --- |
-| `TASK11_UART_LOG_ENABLE` | `0` | 条件有效 | 打开 Task11 详细 UART 运行日志 |
-| `TASK11_RAM_LOG_ENABLE` | `0` | 条件有效 | 打开 Task11 RAM log 编译路径 |
-| `TASK11_RAM_LOG_MAX_LAPS` | `5` | 条件有效 | Task11 RAM log 最大圈数 |
-| `TASK11_RAM_WINDOW_CAPACITY` | `560` | 条件有效 | Task11 window log 容量 |
-| `TASK11_RAM_EVENT_CAPACITY` | `112` | 条件有效 | Task11 event log 容量 |
-| `TASK11_RAM_SUMMARY_CAPACITY` | `24` | 条件有效 | Task11 summary log 容量 |
+| `TASK11_UART_LOG_ENABLE` | `0` | 条件有效 | 打开竞速详细 UART 运行日志，输出前缀为 `RACE_*` |
+| `TASK11_RAM_LOG_ENABLE` | `0` | 条件有效 | 打开竞速 RAM log 编译路径，输出 `RACE_RAM_*` |
+| `TASK11_RAM_LOG_MAX_LAPS` | `5` | 条件有效 | 竞速 RAM log 最大圈数 |
+| `TASK11_RAM_WINDOW_CAPACITY` | `560` | 条件有效 | 竞速 window log 容量 |
+| `TASK11_RAM_EVENT_CAPACITY` | `112` | 条件有效 | 竞速 event log 容量 |
+| `TASK11_RAM_SUMMARY_CAPACITY` | `24` | 条件有效 | 竞速 summary log 容量 |
 | `TASK11_RAM_WINDOW_BEFORE_COUNT` | `1800` | 条件有效 | 进入点位前多少距离开始记录 window |
-| `TASK11_DUMP_LINE_DELAY_MS` | `100` | 条件有效 | Task11 dump 行间延时 |
-| `TASK11_DUMP_SECTION_DELAY_MS` | `1000` | 条件有效 | Task11 dump section 间延时 |
+| `TASK11_DUMP_LINE_DELAY_MS` | `100` | 条件有效 | 竞速 dump 行间延时 |
+| `TASK11_DUMP_SECTION_DELAY_MS` | `1000` | 条件有效 | 竞速 dump section 间延时 |
 | `TASK11_REALTIME_EVENT_LOG_ENABLE` | `0` | 条件有效 | 打开实时事件日志 |
 
 这些参数当前默认关闭较多，是减小体积和串口占用的关键开关。
 
-## Task11 运动参数
+## 竞速运动参数（历史 `TASK11_*` 命名）
 
 | 宏 | 当前值 | 状态 | 作用 |
 | --- | --- | --- | --- |
-| `TASK11_POINT_ALARM_MS` | `80` | 有效 | Task11 点位提示脉冲 |
+| `TASK11_POINT_ALARM_MS` | `80` | 有效 | 竞速点位提示脉冲 |
 | `TASK11_POINT_SETTLE_MS` | `120` | 有效 | 点位动作后稳定等待 |
-| `TASK11_TARGET_LAPS` | `5` | 有效 | Task11 目标圈数 |
-| `TASK11_TOTAL_MAX_RUN_MS` | `240000` | 有效 | Task11 总超时 |
-| `TASK11_LINE_REPORT_PERIOD_MS` | `200` | 有效 | Task11 线段打印周期 |
+| `TASK11_TARGET_LAPS` | `5` | 有效 | 历史采集目标圈数；当前任务三/四由 `run_race_laps(1U/4U)` 传入圈数 |
+| `TASK11_TOTAL_MAX_RUN_MS` | `240000` | 有效 | 竞速总超时 |
+| `TASK11_LINE_REPORT_PERIOD_MS` | `200` | 有效 | 竞速线段打印周期 |
 | `TASK11_LINE_BASE_PWM` | `560` | 被旧代码引用但当前任务确认不生效 | 旧 Task11 纯红外线段基础 PWM，**可删除** |
 | `TASK11_LINE_MIN_PWM` | `0` | 被旧代码引用但当前任务确认不生效 | 旧 Task11 线段最小 PWM，**可删除** |
 | `TASK11_LINE_MAX_PWM` | `760` | 被旧代码引用但当前任务确认不生效 | 旧 Task11 线段最大 PWM，**可删除** |
@@ -524,9 +526,9 @@ Task3 中 `TASK3_BAC_THEORY_CDEG`、`TASK3_AC_TANGENT_CORR_CDEG`、`TASK3_BD_REL
 
 ### 功能变更
 
-- **任务三/四入口改走 Task11 路径**：`run_task_dispatcher()` 中任务三改调 `run_task11_ir_map_test_laps(1U)`，任务四改调 `run_task11_ir_map_test_laps(4U)`。不再走 `run_task3_acbda()`/`run_task4_four_laps()`。
+- **任务三/四入口改走统一竞速路径**：`run_task_dispatcher()` 中任务三调用 `run_race_laps(1U)`，任务四调用 `run_race_laps(4U)`。该流程由早期 Task11 经验采集路径演化而来，因此配置宏仍保留 `TASK11_*` 历史命名，但 UART `11` 入口已经移除。
 - **B/A 点出口转向从红外改为陀螺仪**：`task11_sensor_fast_turn` 改为 `task11_gyro_turn_to_yaw`，使用绝对航向目标停止。
-- **Task11 使用独立航向目标**：`TASK11_AC_HEADING_TARGET_CDEG=-50`、`TASK11_BD_HEADING_TARGET_CDEG=-10638`，不再复用 `TASK3_AC/BD_HEADING_TARGET_CDEG`。
+- **竞速流程使用独立航向目标**：`TASK11_AC_HEADING_TARGET_CDEG`、`TASK11_BD_HEADING_TARGET_CDEG` 为当前竞速流程的 AC/BD 航向目标，宏名前缀为历史遗留。
 - **弧线点位判定简化**：CB/DA 弧线点位从边线+航向判定改为 `line_lost_seen` 判定。
 - **直线点位判定放宽**：从 `edge_point_seen` 改为 `line_valid`。
 - **新增 `task11_gyro_turn_to_yaw()`**：陀螺仪绝对航向转向函数，支持快/慢速 PWM 和过零检测。
@@ -567,4 +569,4 @@ gmake -C Debug clean all
 | `00` 停车命令 | 确认任务内停止检测正常 |
 | 05/07 调试任务 | 确认直行 PID/PD 配置仍有效 |
 | 任务一和任务二 | 覆盖直行、Task2 参数和 Task2 log |
-| 任务三/四/十一 | 覆盖 Task3/Task4/Task11 交叉引用参数 |
+| 任务三/四 | 覆盖 Task3/Task4 与历史 `TASK11_*` 竞速配置参数 |

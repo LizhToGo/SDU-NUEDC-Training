@@ -76,6 +76,24 @@ static inline int32_t task5_yaw_correction(uint8_t nav_ok,
 #endif
 }
 
+typedef struct {
+    int32_t motor_b_delta;
+    int32_t motor_a_delta;
+    int32_t motor_b_total;
+    int32_t motor_a_total;
+    int32_t b_speed_avg;
+    int32_t a_speed_avg;
+    int32_t diff_avg;
+} task5_motor_info_t;
+
+typedef struct {
+    uint8_t nav_ok;
+    const jy62_navigation_t *nav;
+    uint32_t nav_frame_delta;
+    int32_t yaw_start_cdeg;
+    int32_t yaw_correction;
+} task5_nav_info_t;
+
 #if TASK5_RAM_LOG_ENABLE
 typedef struct {
     uint32_t t_ms;
@@ -147,25 +165,15 @@ static inline void task5_ram_dump_line_pause(void)
 }
 
 static inline void task5_ram_log_sample(uint32_t elapsed_ms,
-    int32_t motor_b_delta,
-    int32_t motor_a_delta,
-    int32_t motor_b_total,
-    int32_t motor_a_total,
+    const task5_motor_info_t *motor,
     const straight_drive_output_t *drive,
-    int32_t b_speed_avg,
-    int32_t a_speed_avg,
-    int32_t diff_avg,
-    uint8_t nav_ok,
-    const jy62_navigation_t *nav,
-    uint32_t nav_frame_delta,
-    int32_t yaw_start_cdeg,
-    int32_t yaw_correction)
+    const task5_nav_info_t *nav_info)
 {
     task5_ram_log_t *log;
     int32_t yaw_cdeg = 0;
     int32_t yaw_progress_cdeg = 0;
     int32_t gyro_z_mdps = 0;
-    int32_t gzlp_mdps = 0;
+    int32_t gyro_z_filtered_mdps = 0;
     int32_t roll_cdeg = 0;
     int32_t pitch_cdeg = 0;
     uint8_t update_flags = 0U;
@@ -175,49 +183,50 @@ static inline void task5_ram_log_sample(uint32_t elapsed_ms,
         return;
     }
 
-    if ((nav_ok != 0U) && (nav != 0)) {
-        yaw_cdeg = nav->yaw_relative_cdeg;
-        yaw_progress_cdeg = task5_normalize_cdeg(yaw_cdeg - yaw_start_cdeg);
-        gyro_z_mdps = nav->gyro_z_mdps;
-        gzlp_mdps = nav->gyro_z_filtered_mdps;
-        roll_cdeg = nav->roll_cdeg;
-        pitch_cdeg = nav->pitch_cdeg;
-        update_flags = nav->update_flags;
+    if ((nav_info->nav_ok != 0U) && (nav_info->nav != 0)) {
+        yaw_cdeg = nav_info->nav->yaw_relative_cdeg;
+        yaw_progress_cdeg = task5_normalize_cdeg(yaw_cdeg -
+            nav_info->yaw_start_cdeg);
+        gyro_z_mdps = nav_info->nav->gyro_z_mdps;
+        gyro_z_filtered_mdps = nav_info->nav->gyro_z_filtered_mdps;
+        roll_cdeg = nav_info->nav->roll_cdeg;
+        pitch_cdeg = nav_info->nav->pitch_cdeg;
+        update_flags = nav_info->nav->update_flags;
     }
 
     log = &g_task5_ram_log[g_task5_ram_log_count++];
     log->t_ms = elapsed_ms;
-    log->motor_b_delta = task5_sat_i16(motor_b_delta);
-    log->motor_a_delta = task5_sat_i16(motor_a_delta);
-    log->motor_b_total = task5_sat_i16(motor_b_total);
-    log->motor_a_total = task5_sat_i16(motor_a_total);
+    log->motor_b_delta = task5_sat_i16(motor->motor_b_delta);
+    log->motor_a_delta = task5_sat_i16(motor->motor_a_delta);
+    log->motor_b_total = task5_sat_i16(motor->motor_b_total);
+    log->motor_a_total = task5_sat_i16(motor->motor_a_total);
     log->distance_count = task5_sat_i16(drive->distance_count);
     log->distance_error = task5_sat_i16(drive->distance_error);
     log->distance_correction = task5_sat_i16(drive->distance_correction);
     log->motor_b_speed = task5_sat_i16(drive->motor_b_speed);
     log->motor_a_speed = task5_sat_i16(drive->motor_a_speed);
     log->speed_diff = task5_sat_i16(drive->speed_diff);
-    log->motor_b_avg = task5_sat_i16(b_speed_avg);
-    log->motor_a_avg = task5_sat_i16(a_speed_avg);
-    log->diff_avg = task5_sat_i16(diff_avg);
+    log->motor_b_avg = task5_sat_i16(motor->b_speed_avg);
+    log->motor_a_avg = task5_sat_i16(motor->a_speed_avg);
+    log->diff_avg = task5_sat_i16(motor->diff_avg);
     log->pid_error = task5_sat_i16(drive->pid_error);
     log->p_term = task5_sat_i16(drive->p_term);
     log->i_term = task5_sat_i16(drive->i_term);
     log->d_term = task5_sat_i16(drive->d_term);
     log->feedforward_correction = task5_sat_i16(drive->feedforward_correction);
     log->feedback_correction = task5_sat_i16(drive->feedback_correction);
-    log->yaw_correction = task5_sat_i16(yaw_correction);
+    log->yaw_correction = task5_sat_i16(nav_info->yaw_correction);
     log->correction = task5_sat_i16(drive->correction);
     log->motor_b_pwm = task5_sat_i16(drive->motor_b_pwm);
     log->motor_a_pwm = task5_sat_i16(drive->motor_a_pwm);
     log->yaw_cdeg = task5_sat_i16(yaw_cdeg);
     log->yaw_progress_cdeg = task5_sat_i16(yaw_progress_cdeg);
     log->gyro_z_x100_mdps = task5_sat_i16(gyro_z_mdps / 100);
-    log->gzlp_x100_mdps = task5_sat_i16(gzlp_mdps / 100);
+    log->gzlp_x100_mdps = task5_sat_i16(gyro_z_filtered_mdps / 100);
     log->roll_cdeg = task5_sat_i16(roll_cdeg);
     log->pitch_cdeg = task5_sat_i16(pitch_cdeg);
-    log->nav_frame_delta = task5_sat_u16(nav_frame_delta);
-    log->nav_ok = nav_ok;
+    log->nav_frame_delta = task5_sat_u16(nav_info->nav_frame_delta);
+    log->nav_ok = nav_info->nav_ok;
     log->nav_update_flags = update_flags;
 }
 
@@ -326,7 +335,7 @@ static inline void task5_ram_log_dump(const straight_drive_config_t *config,
 }
 #else
 #define task5_ram_log_reset() ((void)0)
-#define task5_ram_log_sample(elapsed_ms, motor_b_delta, motor_a_delta, motor_b_total, motor_a_total, drive, b_speed_avg, a_speed_avg, diff_avg, nav_ok, nav, nav_frame_delta, yaw_start_cdeg, yaw_correction) ((void)0)
+#define task5_ram_log_sample(elapsed_ms, motor, drive, nav_info) ((void)0)
 #define task5_ram_log_dump(config, feedforward_correction, nav_start_ok, yaw_start_cdeg, motor_b_total, motor_a_total, distance_count) ((void)0)
 #endif
 
@@ -457,21 +466,27 @@ static inline void run_motor_pid_stream(void)
             int32_t a_speed_avg = (log_sample_count != 0U) ?
                 (log_a_speed_sum / (int32_t)log_sample_count) : drive.motor_a_speed;
             int32_t diff_avg = b_speed_avg - a_speed_avg;
+            const task5_motor_info_t motor_info = {
+                .motor_b_delta = motor_b_delta,
+                .motor_a_delta = motor_a_delta,
+                .motor_b_total = motor_b_total,
+                .motor_a_total = motor_a_total,
+                .b_speed_avg = b_speed_avg,
+                .a_speed_avg = a_speed_avg,
+                .diff_avg = diff_avg
+            };
+            const task5_nav_info_t nav_info = {
+                .nav_ok = nav_ok,
+                .nav = &nav,
+                .nav_frame_delta = nav_frame_delta,
+                .yaw_start_cdeg = yaw_start_cdeg,
+                .yaw_correction = yaw_correction
+            };
 
             task5_ram_log_sample(elapsed_ms,
-                motor_b_delta,
-                motor_a_delta,
-                motor_b_total,
-                motor_a_total,
+                &motor_info,
                 &drive,
-                b_speed_avg,
-                a_speed_avg,
-                diff_avg,
-                nav_ok,
-                &nav,
-                nav_frame_delta,
-                yaw_start_cdeg,
-                yaw_correction);
+                &nav_info);
             log_elapsed_ms = 0;
             log_b_speed_sum = 0;
             log_a_speed_sum = 0;

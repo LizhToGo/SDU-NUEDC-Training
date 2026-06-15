@@ -244,6 +244,8 @@ def split_pair(row: dict[str, str], key: str, left: str, right: str) -> None:
 def records_to_rows(records: Iterable[str]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for record in records:
+        if not record or not record.strip():
+            continue
         record_type = record.split(None, 1)[0]
         row = {"record_type": record_type}
         row.update(parse_keyvals(record))
@@ -460,12 +462,18 @@ def sanitize_csv_row(row: dict[str, str], columns: list[str]) -> dict[str, objec
 
 def unique_backup_path(path: Path) -> Path:
     stem = path.with_suffix(path.suffix + ".bak")
-    if not stem.exists():
+    try:
+        if not stem.exists():
+            return stem
+    except OSError:
         return stem
     index = 1
     while True:
         candidate = path.with_suffix(path.suffix + f".bak{index}")
-        if not candidate.exists():
+        try:
+            if not candidate.exists():
+                return candidate
+        except OSError:
             return candidate
         index += 1
 
@@ -664,19 +672,22 @@ def append_summary_text(
 ) -> None:
     if summary_path is None:
         return
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    mode = "w" if replace or not summary_path.exists() else "a"
-    with summary_path.open(mode, encoding="utf-8") as file:
-        if mode == "a":
+    try:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "w" if replace or not summary_path.exists() else "a"
+        with summary_path.open(mode, encoding="utf-8") as file:
+            if mode == "a":
+                file.write("\n")
+            file.write(
+                f"=== TASK11_RUN run_id={metadata['run_id']} "
+                f"imported_at={metadata['imported_at']} "
+                f"source={metadata['source_file']} "
+                f"validation_ok={int(validation_ok)} ===\n"
+            )
+            file.write("\n".join(summary_lines))
             file.write("\n")
-        file.write(
-            f"=== TASK11_RUN run_id={metadata['run_id']} "
-            f"imported_at={metadata['imported_at']} "
-            f"source={metadata['source_file']} "
-            f"validation_ok={int(validation_ok)} ===\n"
-        )
-        file.write("\n".join(summary_lines))
-        file.write("\n")
+    except OSError as exc:
+        print(f"Warning: failed to write summary {summary_path}: {exc}")
 
 
 def main(argv: list[str]) -> int:

@@ -1,36 +1,36 @@
-# Task11 日志整理脚本使用指南
+# 竞速日志整理脚本使用指南
 
-本文说明如何使用 `tools/task11_log_to_csv.py` 将串口接收到的 Task11 日志整理成本地累计数据文件。
+本文说明如何使用 `tools/task11_log_to_csv.py` 将串口接收到的竞速 RAM 日志整理成本地累计数据文件。脚本文件名保留历史 Task11 命名，但当前可用于 `RACE_*` 日志。
 
-> 注意：当前主分支默认 `TASK11_UART_LOG_ENABLE=0`、`TASK11_RAM_LOG_ENABLE=0`。如果需要采集完整 `TASK11_*` 数据，先在 `app_config.h` 中打开对应日志开关并重新编译烧录。
+> 注意：当前主分支默认 `TASK11_UART_LOG_ENABLE=0`、`TASK11_RAM_LOG_ENABLE=0`。如果需要采集完整 `RACE_*` 数据，先在 `app_config.h` 中打开对应日志开关并重新编译烧录。
 
 ## 脚本用途
 
-`tools/task11_log_to_csv.py` 用于处理类似 VOFA+、串口助手或 Codex 附件中保存的 Task11 文本日志。
+`tools/task11_log_to_csv.py` 用于处理类似 VOFA+、串口助手或 Codex 附件中保存的竞速文本日志。
 
 它会自动完成：
 
 - 拼回被接收工具时间戳拆开的长行。
-- 解析 `TASK11_* key=value` 格式数据。
+- 解析 `RACE_* key=value` 格式数据，并尽量兼容历史 `TASK11_*` 数据。
 - 校验 `seq` 是否连续。
 - 校验 `EVT/SUM/WIN` 的 `idx` 是否连续。
-- 校验是否收到 `TASK11_DUMP_SECTION_END` 和 `TASK11_RAM_END`。
+- 校验是否收到 `RACE_DUMP_SECTION_END` 和 `RACE_RAM_END`。
 - 检查 RAM 日志是否溢出。
 - 默认增量追加到本地累计 CSV 文件。
 - 自动防止同一份日志重复导入。
 
 ## 基本用法
 
-先把串口接收到的完整 Task11 日志保存为文本文件，例如：
+先把串口接收到的完整竞速日志保存为文本文件，例如：
 
 ```text
-C:\Users\orang\Desktop\task11_run_001.txt
+C:\Users\orang\Desktop\race_run_001.txt
 ```
 
 然后在工程根目录运行：
 
 ```powershell
-& "C:\Users\orang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" tools\task11_log_to_csv.py "C:\Users\orang\Desktop\task11_run_001.txt" --strict
+& "C:\Users\orang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" tools\task11_log_to_csv.py "C:\Users\orang\Desktop\race_run_001.txt" --strict
 ```
 
 `--strict` 表示如果日志缺行、计数不一致或 RAM 溢出，脚本会返回失败，方便及时发现这次数据不能直接用于调参。
@@ -43,9 +43,9 @@ C:\Users\orang\Desktop\task11_run_001.txt
 
 | 文件 | 内容 |
 | --- | --- |
-| `data/task11_experience_data.csv` | 全部重建后的 `TASK11_*` 原始记录，适合做细粒度分析。 |
-| `data/task11_experience_runs.csv` | 每次 Task11 运行一行总览，包括完整性、总记录数、完成状态、主要配置。 |
-| `data/task11_experience_segments.csv` | 每次运行的 `TASK11_SUM` 分段摘要，通常每 5 圈为 20 行。 |
+| `data/task11_experience_data.csv` | 全部重建后的 `RACE_*` 原始记录，适合做细粒度分析。 |
+| `data/task11_experience_runs.csv` | 每次竞速运行一行总览，包括完整性、总记录数、完成状态、主要配置。 |
+| `data/task11_experience_segments.csv` | 每次运行的 `RACE_SUM` 分段摘要。 |
 | `data/task11_experience_turns.csv` | 每次运行的转向事件摘要，记录转向前角度、转向后角度、转过角度、转向距离。 |
 | `data/task11_experience_summary.txt` | 人类可读的 summary 文本，会追加每次运行的校验和关键统计。 |
 
@@ -109,7 +109,7 @@ task11_f1a18e8ccac2
 
 1. 运行任务 10，完成零航向标定。
 2. 运行任务 11，让小车完成目标圈数。
-3. 等待串口完整输出到 `TASK11_RAM_END`。
+3. 等待串口完整输出到 `RACE_RAM_END`。
 4. 保存串口接收文本。
 5. 运行本脚本导入日志。
 6. 查看 `data/task11_experience_summary.txt`，确认 `validation_ok=1`。
@@ -129,7 +129,7 @@ EVT: ... ok=1
 SUM: ... ok=1
 WIN: ... ok=1
 overflow: win_ov=0 ev_ov=0 sum_ov=0 ok=1
-complete: lap=5 ... reason=point
+complete: lap=... reason=point
 ```
 
 如果 `validation_ok=0`，这次日志不建议直接作为经验数据使用。

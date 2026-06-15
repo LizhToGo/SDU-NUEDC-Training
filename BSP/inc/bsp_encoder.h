@@ -85,26 +85,34 @@ static void encoder_update_motor_a(void)
         ENCODER_MOTOR_A_FORWARD_SIGN);
 }
 
-/* 在开启 GPIO 中断前读取编码器初始状态。 */
-static void encoder_init_runtime(void)
+static void encoder_reset_all_state(void)
 {
     g_motor_a_encoder_count = 0;
     g_motor_b_encoder_count = 0;
-    g_motor_b_encoder_state = encoder_read_state(ENCODER_MOTOR_B_A_PIN, ENCODER_MOTOR_B_B_PIN);
-    g_motor_a_encoder_state = encoder_read_state(ENCODER_MOTOR_A_A_PIN, ENCODER_MOTOR_A_B_PIN);
+    g_motor_b_encoder_state = encoder_read_state(ENCODER_MOTOR_B_A_PIN,
+        ENCODER_MOTOR_B_B_PIN);
+    g_motor_a_encoder_state = encoder_read_state(ENCODER_MOTOR_A_A_PIN,
+        ENCODER_MOTOR_A_B_PIN);
+}
 
+static void encoder_clear_all_interrupts(void)
+{
     DL_GPIO_clearInterruptStatus(ENCODER_PORT,
         ENCODER_MOTOR_B_A_PIN | ENCODER_MOTOR_B_B_PIN |
         ENCODER_MOTOR_A_A_PIN | ENCODER_MOTOR_A_B_PIN);
 }
 
+/* 在开启 GPIO 中断前读取编码器初始状态。 */
+static void encoder_init_runtime(void)
+{
+    encoder_reset_all_state();
+    encoder_clear_all_interrupts();
+}
+
 /* 编码器初始状态有效后，开启 GPIOA 分组中断。 */
 static void encoder_enable_interrupts(void)
 {
-    DL_GPIO_clearInterruptStatus(ENCODER_PORT,
-        ENCODER_MOTOR_B_A_PIN | ENCODER_MOTOR_B_B_PIN |
-        ENCODER_MOTOR_A_A_PIN | ENCODER_MOTOR_A_B_PIN);
-
+    encoder_clear_all_interrupts();
     NVIC_EnableIRQ(ENCODER_INT_IRQN);
 }
 
@@ -146,10 +154,7 @@ static void encoder_reset_distance_counts(void)
     int32_t dummy_a;
 
     __disable_irq();
-    g_motor_b_encoder_count = 0;
-    g_motor_a_encoder_count = 0;
-    g_motor_b_encoder_state = encoder_read_state(ENCODER_MOTOR_B_A_PIN, ENCODER_MOTOR_B_B_PIN);
-    g_motor_a_encoder_state = encoder_read_state(ENCODER_MOTOR_A_A_PIN, ENCODER_MOTOR_A_B_PIN);
+    encoder_reset_all_state();
     __enable_irq();
 
     encoder_get_delta_counts(&dummy_b, &dummy_a);
@@ -174,28 +179,46 @@ static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32
            ((*motor_a_delta < 0) ? -*motor_a_delta : *motor_a_delta);
 }
 
+static uint8_t encoder_test_single_motor(const char *label,
+    int16_t motor_b_pwm,
+    int16_t motor_a_pwm,
+    int32_t *motor_b_abs_out,
+    int32_t *motor_a_abs_out)
+{
+    int32_t motor_b_delta;
+    int32_t motor_a_delta;
+
+    lc_printf("Encoder self-test: %s motor\r\n", label);
+    TB6612_SetDifferential(motor_b_pwm, motor_a_pwm);
+    encoder_measure_for_ms(ENCODER_TEST_MS, &motor_b_delta, &motor_a_delta);
+    TB6612_Brake();
+    delay_ms(300);
+
+    *motor_b_abs_out = (motor_b_delta < 0) ? -motor_b_delta : motor_b_delta;
+    *motor_a_abs_out = (motor_a_delta < 0) ? -motor_a_delta : motor_a_delta;
+    lc_printf("%s motor test count: B=%ld A=%ld\r\n",
+        label,
+        motor_b_delta,
+        motor_a_delta);
+
+    return 1U;
+}
+
 /*
  * 可选接线自检。
  * 每次只转一个电机，检查对应编码器是否有计数。
  */
 static uint8_t encoder_motor_self_test(void)
 {
-    int32_t motor_b_delta;
-    int32_t motor_a_delta;
     int32_t motor_b_abs;
     int32_t motor_a_abs;
     uint8_t ok = 1U;
 
-    lc_printf("Encoder self-test: B motor\r\n");
-    TB6612_SetDifferential(ENCODER_TEST_PWM, 0);
-    encoder_measure_for_ms(ENCODER_TEST_MS, &motor_b_delta, &motor_a_delta);
-    TB6612_Brake();
-    delay_ms(300);
-
-    motor_b_abs = (motor_b_delta < 0) ? -motor_b_delta : motor_b_delta;
-    motor_a_abs = (motor_a_delta < 0) ? -motor_a_delta : motor_a_delta;
-    lc_printf("B motor test count: B=%ld A=%ld\r\n", motor_b_delta, motor_a_delta);
-
+    (void)encoder_test_single_motor("B",
+        ENCODER_TEST_PWM,
+        0,
+        &motor_b_abs,
+        &motor_a_abs);
     if (motor_b_abs < ENCODER_MIN_PULSE) {
         lc_printf("ERROR: B motor encoder has no pulse. Check PA14/PA15, PWMB, BIN1/BIN2, and motor B wiring.\r\n");
         ok = 0U;
@@ -206,16 +229,11 @@ static uint8_t encoder_motor_self_test(void)
         ok = 0U;
     }
 
-    lc_printf("Encoder self-test: A motor\r\n");
-    TB6612_SetDifferential(0, ENCODER_TEST_PWM);
-    encoder_measure_for_ms(ENCODER_TEST_MS, &motor_b_delta, &motor_a_delta);
-    TB6612_Brake();
-    delay_ms(300);
-
-    motor_b_abs = (motor_b_delta < 0) ? -motor_b_delta : motor_b_delta;
-    motor_a_abs = (motor_a_delta < 0) ? -motor_a_delta : motor_a_delta;
-    lc_printf("A motor test count: B=%ld A=%ld\r\n", motor_b_delta, motor_a_delta);
-
+    (void)encoder_test_single_motor("A",
+        0,
+        ENCODER_TEST_PWM,
+        &motor_b_abs,
+        &motor_a_abs);
     if (motor_a_abs < ENCODER_MIN_PULSE) {
         lc_printf("ERROR: A motor encoder has no pulse. Check PA16/PA17, PWMA, AIN1/AIN2, and motor A wiring.\r\n");
         ok = 0U;

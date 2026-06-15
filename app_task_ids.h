@@ -13,14 +13,13 @@ typedef enum {
     TASK_ID_6 = 6,
     TASK_ID_7 = 7,
     TASK_ID_10 = 10,
-    TASK_ID_11 = 11,
     TASK_ID_STOP = 255
 } task_id_t;
 
-/* Convert decimal command numbers such as 1, 10, and 11 to task ids. */
+/* Convert decimal command numbers such as 1 and 10 to task ids. */
 task_id_t task_uart_command_from_number(uint8_t number);
 
-/* Convert raw binary command bytes such as 0x01 and 0x11 to task ids. */
+/* Convert raw binary command bytes such as 0x01 and 0x10 to task ids. */
 task_id_t task_uart_command_from_hex_byte(uint8_t value);
 
 /* Poll UART0 once and return a decoded task command, or TASK_ID_NONE. */
