@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-这一版已经完成了一轮结构重构：`main.c` 不再承载大段控制实现，只保留系统启动、任务分发、任务一/二入口、调试入口和中断入口。任务三/任务四统一走 `run_race_laps()`，实现放在 `race_laps.h`；历史 Task11 经验采集逻辑已经并入当前竞速路径，但部分配置宏仍保留 `TASK11_*` 命名。
+这一版已经完成了一轮结构重构：`main.c` 不再承载大段控制实现，只保留系统启动、任务分发、任务一/二入口、调试入口和中断入口。任务三/任务四统一走 `run_race_laps()`，实现放在 `race/race_laps.h`；历史经验采集逻辑已经并入当前竞速路径，配置宏已统一改为 `RACE_*` 命名。
 
 为避免 CCS 生成 makefile 不自动纳入新增 `.c` 文件，本项目当前新增业务模块采用 header-only 方式集成。后续如果要拆成 `.c/.h`，需要先确认 CCS 工程配置会把新源文件加入编译和链接。
 
@@ -41,6 +41,8 @@
 
 串口命令同时支持二进制字节和文本数字。也就是说发送 HEX `03` 或 ASCII `03` 都可以启动任务三。
 
+任务三和任务四在按键或 UART0 启动时，会先触发一次 ST011 声光模块作为起步确认；触发入口在 `tasks/task_dispatcher.h` 的 `prepare_task_start()`，脉冲时长由 `RACE_START_ALARM_MS` 控制。
+
 ## 代码结构
 
 ```text
@@ -53,12 +55,23 @@
 ├── app_straight.h         # 通用差速直行控制
 ├── app_task_ids.c/.h      # UART/按键任务命令解析
 ├── app_debug_modes.h      # 05/07 等调试模式
-├── heading_straight.h     # 航向直线到线段控制
-├── line_fast_turn.h       # C/D 点快速转向测试和转向交接
-├── arc_segment.h          # Task2 竞速弧线段
-├── task2_ram_log.h        # Task2 RAM 日志
-├── race_log.h             # 任务三/四竞速 RAM 日志
-├── race_laps.h            # 任务三/四统一跑圈流程
+├── straight/
+│   └── straight_line.h    # 任务一/二等直线行驶封装
+├── tasks/
+│   ├── task_dispatcher.h  # 任务调度、启动前准备和任务入口分发
+│   ├── task_sequences.h   # 任务一/二序列入口
+│   └── task6_turn_test.h  # C 点快速转向测试
+├── heading/
+│   └── heading_straight.h # 航向直线到线段控制
+├── turn/
+│   ├── line_fast_turn.h   # C/D 点快速转向测试和转向交接
+│   └── arc_segment.h      # Task2 竞速弧线段
+├── race/
+│   ├── task2_ram_log.h    # Task2 RAM 日志
+│   ├── race_log.h         # 任务三/四竞速 RAM 日志
+│   ├── race_laps.h        # 任务三/四统一跑圈流程
+│   ├── race_primitives.h  # 竞速转向、前进、航向计算等基础动作
+│   └── race_phase.h       # 竞速阶段状态更新、控制量计算和阶段切换
 ├── Board/                 # UART 打印、delay 等板级工具
 ├── BSP/                   # TB6612、红外、JY62、编码器驱动
 ├── tools/
@@ -101,7 +114,7 @@ clean build：
 | `TASK3_*` | 任务三几何、弧线、直线搜索、点位声光 |
 | `TASK4_*` | 任务四复用任务三参数并扩展多圈逻辑 |
 | `TASK6_*` | C 点快速转向测试 |
-| `TASK11_*` | 当前竞速路径参数，历史命名保留；实际由 `race_*` 逻辑使用 |
+| `RACE_*` | 当前竞速路径参数，实际由 `race_*` 逻辑使用 |
 
 几个当前重要值：
 
@@ -110,19 +123,20 @@ clean build：
 #define STRAIGHT_A_BASE_PWM (633)
 #define TASK3_AC_HEADING_TARGET_CDEG  (-3660)
 #define TASK3_BD_HEADING_TARGET_CDEG  (-13920)
-#define TASK11_AC_HEADING_TARGET_CDEG (-50)
-#define TASK11_BD_HEADING_TARGET_CDEG (-10638)
-#define TASK11_STRAIGHT_BASE_PWM      (600)
-#define TASK11_ARC_BASE_PWM           (540)
-#define TASK11_AC_POINT_ARM_COUNT     (7300)
-#define TASK11_BD_POINT_ARM_COUNT     (7300)
+#define RACE_AC_HEADING_TARGET_CDEG (-50)
+#define RACE_BD_HEADING_TARGET_CDEG (-10638)
+#define RACE_STRAIGHT_BASE_PWM      (600)
+#define RACE_ARC_BASE_PWM           (540)
+#define RACE_START_ALARM_MS         (RACE_POINT_ALARM_MS)
+#define RACE_AC_POINT_ARM_COUNT     (7300)
+#define RACE_BD_POINT_ARM_COUNT     (7300)
 ```
 
 宏说明见 [docs/app_config宏定义说明.md](docs/app_config宏定义说明.md)。
 
 ## 任务三/四路径
 
-任务三和任务四共用 `race_laps.h` 的竞速跑圈逻辑：
+任务三和任务四共用 `race/race_laps.h` 的竞速跑圈逻辑：
 
 ```text
 AC 直线 -> CB 左弧线 -> BD 直线 -> DA 右弧线
@@ -130,6 +144,7 @@ AC 直线 -> CB 左弧线 -> BD 直线 -> DA 右弧线
 
 控制要点：
 
+- 起步提示：任务三/四启动时使用 `st011_start_pulse(RACE_START_ALARM_MS)` 非阻塞触发一次声光模块。
 - AC/BD 直线：以 JY62 航向目标为主，红外用于点位检测和辅助记录。
 - CB/DA 弧线：以红外循迹和差速控制为主，可记录 JY62 航向误差。
 - C/D 点：通过红外线判定进入转向动作。
@@ -158,10 +173,10 @@ AC 直线 -> CB 左弧线 -> BD 直线 -> DA 右弧线
 日志开关：
 
 - `TASK2_RAM_LOG_ENABLE`：Task2 RAM 日志。
-- `TASK11_UART_LOG_ENABLE`：任务三/四实时 `RACE_*` 文本日志。
-- `TASK11_RAM_LOG_ENABLE`：任务三/四 `RACE_RAM_BEGIN` 到 `RACE_RAM_END` 的 RAM dump。
+- `RACE_UART_LOG_ENABLE`：任务三/四实时 `RACE_*` 文本日志。
+- `RACE_RAM_LOG_ENABLE`：任务三/四 `RACE_RAM_BEGIN` 到 `RACE_RAM_END` 的 RAM dump。
 
-日志整理脚本见 [tools/task11_log_to_csv.py](tools/task11_log_to_csv.py)，用法见 [docs/task11_log_to_csv_usage.md](docs/task11_log_to_csv_usage.md)。
+日志整理脚本见 [tools/task11_log_to_csv.py](tools/task11_log_to_csv.py)，用法已并入 [docs/串口调试与跑车流程.md](docs/串口调试与跑车流程.md) 的“日志整理”章节。
 
 ## 文档入口
 
@@ -171,9 +186,11 @@ AC 直线 -> CB 左弧线 -> BD 直线 -> DA 右弧线
 | [docs/串口调试与跑车流程.md](docs/串口调试与跑车流程.md) | 串口命令、跑车流程、日志字段 |
 | [docs/任务三调试说明.md](docs/任务三调试说明.md) | 任务三路径、点位、常见问题 |
 | [docs/任务四调试说明.md](docs/任务四调试说明.md) | 任务四多圈路径、误差积累分析 |
-| [docs/当前调试状态与后续问题.md](docs/当前调试状态与后续问题.md) | 当前实车状态和后续风险 |
 | [docs/app_config宏定义说明.md](docs/app_config宏定义说明.md) | 调参宏索引 |
-| [docs/task11_log_to_csv_usage.md](docs/task11_log_to_csv_usage.md) | 日志转 CSV 工具说明 |
+| [docs/Board模块说明.md](docs/Board模块说明.md) | UART 打印、延时和板级工具说明 |
+| [docs/TB6612驱动使用说明.md](docs/TB6612驱动使用说明.md) | 电机驱动接线、接口和方向校准 |
+| [docs/JY62陀螺仪驱动说明.md](docs/JY62陀螺仪驱动说明.md) | 惯导接线、协议解析、任务日志和排错 |
+| [docs/八路红外循迹模块驱动说明.md](docs/八路红外循迹模块驱动说明.md) | 红外 I2C 读取、mask/err 含义和测试流程 |
 
 ## Push 前检查
 

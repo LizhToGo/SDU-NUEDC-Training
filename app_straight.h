@@ -7,6 +7,11 @@
 #include "app_control.h"
 #include "app_motion_utils.h"
 
+/**
+ * @brief Tunable parameters for encoder differential straight driving.
+ *
+ * Positive correction lowers B PWM and raises A PWM in the current wiring.
+ */
 typedef struct {
     int32_t base_b_pwm;
     int32_t base_a_pwm;
@@ -19,6 +24,9 @@ typedef struct {
     int32_t max_pwm;
 } straight_drive_config_t;
 
+/**
+ * @brief Encoder input snapshot for one control period.
+ */
 typedef struct {
     int32_t motor_b_delta;
     int32_t motor_a_delta;
@@ -26,6 +34,9 @@ typedef struct {
     int32_t motor_a_total;
 } straight_drive_input_t;
 
+/**
+ * @brief Full calculated output of one straight-drive PID update.
+ */
 typedef struct {
     int32_t motor_b_speed;
     int32_t motor_a_speed;
@@ -44,6 +55,9 @@ typedef struct {
     int32_t motor_a_pwm;
 } straight_drive_output_t;
 
+/**
+ * @brief Fill a straight-drive config from shared base PWM and supplied gains.
+ */
 static inline void straight_drive_apply_test_config(straight_drive_config_t *config,
     int32_t target_speed_diff,
     int32_t diff_ff_gain,
@@ -62,6 +76,9 @@ static inline void straight_drive_apply_test_config(straight_drive_config_t *con
     config->max_pwm = STRAIGHT_MAX_PWM;
 }
 
+/**
+ * @brief Load the PID-test straight-drive parameter set.
+ */
 static inline void straight_drive_config_pid_test(straight_drive_config_t *config)
 {
     straight_drive_apply_test_config(config,
@@ -72,6 +89,9 @@ static inline void straight_drive_config_pid_test(straight_drive_config_t *confi
         PID_TEST_CORR_MAX);
 }
 
+/**
+ * @brief Load the PD-test straight-drive parameter set.
+ */
 static inline void straight_drive_config_pd_test(straight_drive_config_t *config)
 {
     straight_drive_apply_test_config(config,
@@ -95,6 +115,9 @@ static inline int32_t straight_drive_feedforward(const straight_drive_config_t *
         config->correction_max);
 }
 
+/**
+ * @brief Update straight-drive correction from a grouped encoder snapshot.
+ */
 static inline void straight_drive_update_from_input(straight_pid_t *pid,
     const straight_drive_config_t *config,
     const straight_drive_input_t *input,
@@ -134,6 +157,9 @@ static inline void straight_drive_update_from_input(straight_pid_t *pid,
         config->max_pwm);
 }
 
+/**
+ * @brief Convenience wrapper for straight_drive_update_from_input().
+ */
 static inline void straight_drive_update(straight_pid_t *pid,
     const straight_drive_config_t *config,
     int32_t motor_b_delta,

@@ -1,3 +1,11 @@
+/**
+ * @file app_config.h
+ * @brief Central tuning constants for the NUEDC training car firmware.
+ *
+ * This file intentionally keeps contest, debug, motor, encoder, IR, and JY62
+ * tuning values in one place. Most constants are empirical track-test values,
+ * so edits here should be small and recorded in serial logs or project notes.
+ */
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
@@ -10,6 +18,7 @@
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (870)
 
+/* Common debug report period and Task5 RAM-log/yaw-assist controls. */
 #define PID_REPORT_PERIOD_MS (100)
 #define TASK5_RAM_LOG_ENABLE       (0)
 #define TASK5_RAM_LOG_CAPACITY     (384)
@@ -22,6 +31,7 @@
 #define TASK5_YAW_GYRO_DAMP_DIVISOR (2600)
 
 /* 功能开关。 */
+/* Compile-time feature switches for debug modes and contest tasks. */
 #define ENABLE_IR_TRACKING_UART_TEST (0)
 #define ENABLE_CONTEST_TASKS         (1)
 #define ENABLE_LINE_FOLLOW_TEST      (0)
@@ -29,13 +39,16 @@
 #define ENABLE_ENCODER_SELF_TEST     (0)
 
 /* JY62 陀螺仪的置零和状态打印周期。 */
+/* JY62 boot-zero delay and periodic navigation report interval. */
 #define JY62_BOOT_ZERO_DELAY_MS    (300)
 #define JY62_TASK_REPORT_PERIOD_MS (500)
 
 /* 红外模块串口调试模式。 */
+/* IR tracking module UART test sampling period. */
 #define IR_TRACKING_TEST_PERIOD_MS (100)
 
 /* 纯红外循迹调试模式。 */
+/* Pure IR line-follow test loop, report, PWM, and turn-gain limits. */
 #define LINE_FOLLOW_PERIOD_MS        (20)
 #define LINE_FOLLOW_REPORT_PERIOD_MS (300)
 #define LINE_FOLLOW_BASE_PWM         (480)
@@ -46,6 +59,7 @@
 #define LINE_FOLLOW_TURN_SIGN        (1)
 
 /* 任务按键和任务一/二时序参数。 */
+/* Button debounce plus Task1 start/stop timing and straight-line limits. */
 #define TASK_BUTTON_DEBOUNCE_MS (30)
 #define TASK_BUTTON_IDLE_MS     (10)
 #define TASK1_START_ALARM_MS    (120)
@@ -65,6 +79,7 @@
 #define TASK1_STOP_MIN_IR_COUNT   (1)
 
 /* 任务二：A-B 直行、B-C 半弧循迹、C-D 直行、D-A 半弧循迹。 */
+/* Task2 route: AB straight, BC half-arc, CD straight, DA half-arc. */
 #define TASK2_POINT_ALARM_MS          (120)
 #define TASK2_RAM_LOG_ENABLE          (1)
 #define TASK2_RAM_SAMPLE_CAPACITY     (192)
@@ -93,14 +108,17 @@
 #define TASK2_ARC_REPORT_PERIOD_MS    (40)
 
 /* ST011 声光模块低电平触发：空闲为高电平，短暂拉低表示提示。 */
+/* ST011 alarm module polarity: idle high, short low pulse means alarm. */
 #define ST011_ACTIVE_LOW (1)
 
 /* 可选编码器自检参数；只有小车架空时才建议开启自检。 */
+/* Optional encoder self-test values; enable only when the car is lifted. */
 #define ENCODER_TEST_PWM  (260)
 #define ENCODER_TEST_MS   (500)
 #define ENCODER_MIN_PULSE (2)
 
 /* 直行 PID，使用整数定点计算：output = (KP*err + KI*integral + KD*d_err) / SCALE。 */
+/* Straight speed-difference PID: output = (KP*err + KI*I + KD*D) / SCALE. */
 #define STRAIGHT_PID_SCALE (20)
 #define STRAIGHT_PID_KP    (22)
 #define STRAIGHT_PID_KI    (2)
@@ -109,9 +127,11 @@
 #define STRAIGHT_CORR_MAX  (140)
 
 /* 速度差目标：target = B_spd - A_spd。直线段保持 0，弧线段后续可传入非零目标。 */
+/* Default wheel-speed difference target: B_spd - A_spd. */
 #define STRAIGHT_TARGET_SPEED_DIFF (0)
 
 /* 05 轮速标定模式使用更大的限幅，用于验证弧线会用到的非零差速闭环。 */
+/* Task05 wheel-speed PID tuning mode with wider correction limits. */
 #define PID_TEST_TARGET_SPEED_DIFF (0)
 #define PID_TEST_I_LIMIT           (600)
 #define PID_TEST_CORR_MAX          (180)
@@ -120,6 +140,7 @@
 #define PID_TEST_DISTANCE_CORR_MAX     (45)
 
 /* 07 差速 PD 调参模式：只看 B_spd - A_spd 的 P/D 响应，累计距离差只打印不参与修正。 */
+/* Task07 speed-difference PD tuning; distance error is logged only. */
 #define PD_TEST_TARGET_SPEED_DIFF  (20)
 #define PD_TEST_KP                 (22)
 #define PD_TEST_KD                 (6)
@@ -129,6 +150,7 @@
 #define PD_TEST_DISTANCE_CORR_MAX     (0)
 
 /* 任务一的编码器距离修正和 JY62 航向修正参数。 */
+/* Task1 encoder-distance correction and JY62 heading correction parameters. */
 #define TASK1_DISTANCE_CORR_DIVISOR (16)
 #define TASK1_DISTANCE_CORR_MAX     (45)
 #define TASK1_HEADING_CORR_DIVISOR  (12)
@@ -144,6 +166,7 @@
 #define TASK1_HEADING_PRIORITY_MAX_DERR (240)
 
 /* 任务二 AB 只有约 100cm，使用更快的编码器距离修正和 JY62 航向修正。 */
+/* Task2 AB/CD straight parameters and end-of-line search behavior. */
 #define TASK2_AB_DISTANCE_CORR_DIVISOR (20)
 #define TASK2_AB_DISTANCE_CORR_MAX     (65)
 #define TASK2_AB_HEADING_CORR_DIVISOR  (5)
@@ -163,6 +186,7 @@
 #define TASK2_STRAIGHT_SEARCH_BASE_DROP    (45)
 
 /* 任务三：A->C 直线、C->B 红外弧线、B->D 直线、D->A 红外弧线。 */
+/* Task3 route: AC straight, CB IR arc, BD straight, DA IR arc. */
 #define TASK3_POINT_ALARM_MS          (120)
 #define TASK3_SENSOR_TO_AXIS_MM       (175)
 #define TASK3_ARC_RADIUS_CM           (40)
@@ -229,98 +253,106 @@
 #define TASK4_D_TURN_B_PWM            (760)
 #define TASK4_D_TURN_A_PWM            (-220)
 
-/* Race lap control shared by task 3 and task 4. */
-#define TASK11_UART_LOG_ENABLE      (0)
-#define TASK11_RAM_LOG_ENABLE       (0)
-#define TASK11_RAM_LOG_MAX_LAPS     (5)
-#define TASK11_RAM_WINDOW_CAPACITY  (560)
-#define TASK11_RAM_EVENT_CAPACITY   (112)
-#define TASK11_RAM_SUMMARY_CAPACITY (24)
-#define TASK11_RAM_WINDOW_BEFORE_COUNT (1800)
-#define TASK11_RAM_WINDOW_AFTER_START_COUNT (1800)
-#define TASK11_DUMP_LINE_DELAY_MS   (100)
-#define TASK11_DUMP_SECTION_DELAY_MS (1000)
-#define TASK11_REALTIME_EVENT_LOG_ENABLE (0)
-#define TASK11_POINT_ALARM_MS         (80)
-#define TASK11_POINT_SETTLE_MS        (120)
-#define TASK11_TOTAL_MAX_RUN_MS       (240000)
-#define TASK11_LINE_REPORT_PERIOD_MS  (200)
-#define TASK11_LINE_BASE_PWM          (560)
-#define TASK11_LINE_MIN_PWM           (0)
-#define TASK11_LINE_MAX_PWM           (760)
-#define TASK11_LINE_TURN_DIVISOR      (9)
-#define TASK11_LINE_KD_DIVISOR        (7)
-#define TASK11_LINE_DERIV_LIMIT       (700)
-#define TASK11_LINE_TURN_LIMIT        (260)
-#define TASK11_LINE_ERROR_FILTER_DIVISOR (2)
-#define TASK11_LINE_LOST_BASE_DROP    (60)
-#define TASK11_LINE_LOST_TURN         (150)
-#define TASK11_STRAIGHT_BASE_PWM      (600)
-#define TASK11_STRAIGHT_TARGET_DIFF   (0)
-#define TASK11_STRAIGHT_GYRO_NAV_ENABLE (1)
-#define TASK11_STRAIGHT_IR_ASSIST_ENABLE (0)
-#define TASK11_STRAIGHT_IR_ASSIST_DIVISOR (3)
-#define TASK11_STRAIGHT_HEADING_CORR_DIVISOR (8)
-#define TASK11_STRAIGHT_HEADING_CORR_MAX (140)
-#define TASK11_STRAIGHT_GYRO_DAMP_DIVISOR (1600)
-#define TASK11_ARC_BASE_PWM           (540)
-#define TASK11_CB_ARC_ENTRY_TARGET_DIFF  (-48)
-#define TASK11_CB_ARC_CRUISE_TARGET_DIFF (-48)
-#define TASK11_DA_ARC_ENTRY_TARGET_DIFF  (46)
-#define TASK11_DA_ARC_CRUISE_TARGET_DIFF (46)
-#define TASK11_ARC_YAW_NAV_ENABLE     (0)
-#define TASK11_ARC_YAW_CORR_DIVISOR   (260)
-#define TASK11_ARC_YAW_CORR_MAX       (45)
-#define TASK11_ARC_GYRO_DAMP_DIVISOR  (4400)
-#define TASK11_DIFF_KP                (PD_TEST_KP)
-#define TASK11_DIFF_KD                (PD_TEST_KD)
-#define TASK11_DIFF_FF_GAIN           (2)
-#define TASK11_DIFF_CORR_MAX          (PD_TEST_CORR_MAX)
-#define TASK11_IR_LEFT_EDGE_MASK      (0x03U)
-#define TASK11_IR_RIGHT_EDGE_MASK     (0xC0U)
-#define TASK11_IR_CENTER_6_MASK       (0x7EU)
-#define TASK11_IR_CENTER_6_FORBID_MASK (0x81U)
-#define TASK11_IR_TURN_STOP_MIN_COUNT (1)
-#define TASK11_LEFT_TURN_B_PWM        (-120)
-#define TASK11_LEFT_TURN_A_PWM        (520)
-#define TASK11_LEFT_TURN_SLOW_B_PWM   (80)
-#define TASK11_LEFT_TURN_SLOW_A_PWM   (360)
-#define TASK11_RIGHT_TURN_B_PWM       (520)
-#define TASK11_RIGHT_TURN_A_PWM       (120)
-#define TASK11_RIGHT_TURN_SLOW_B_PWM  (360)
-#define TASK11_RIGHT_TURN_SLOW_A_PWM  (80)
-#define TASK11_EXIT_LEFT_TURN_B_PWM   (80)
-#define TASK11_EXIT_LEFT_TURN_A_PWM   (440)
-#define TASK11_EXIT_LEFT_TURN_SLOW_B_PWM (60)
-#define TASK11_EXIT_LEFT_TURN_SLOW_A_PWM (300)
-#define TASK11_EXIT_RIGHT_TURN_B_PWM  (440)
-#define TASK11_EXIT_RIGHT_TURN_A_PWM  (80)
-#define TASK11_EXIT_RIGHT_TURN_SLOW_B_PWM (300)
-#define TASK11_EXIT_RIGHT_TURN_SLOW_A_PWM (60)
-#define TASK11_FAST_TURN_TIMEOUT_MS   (600)
-#define TASK11_FAST_TURN_REPORT_PERIOD_MS (TASK6_C_TURN_REPORT_PERIOD_MS)
-#define TASK11_FAST_TURN_GYRO_SLOW_ENABLE (1)
-#define TASK11_FAST_TURN_GYRO_SLOW_CDEG (2600)
-#define TASK11_EXIT_TURN_YAW_STOP_ENABLE (1)
-#define TASK11_TURN_YAW_STOP_TOL_CDEG    (260)
-#define TASK11_TURN_YAW_SLOW_ZONE_CDEG   (900)
-#define TASK11_TURN_YAW_STOP_GZLP_TOL_MDPS (14000)
-/* Task11 uses AC as the zero heading to collect Task3/Task4 straight data. */
-#define TASK11_AC_HEADING_TARGET_CDEG (-50)
-#define TASK11_BD_HEADING_TARGET_CDEG (-10638)
-#define TASK11_TURN_CENTER6_ERROR_MAX (1500)
-#define TASK11_POINT_ADVANCE_COUNT    (300)
-#define TASK11_ARC_POINT_ADVANCE_COUNT (800)
-#define TASK11_POINT_ADVANCE_PWM      (360)
-#define TASK11_POINT_ADVANCE_TIMEOUT_MS (800)
-#define TASK11_AC_POINT_ARM_COUNT     (7300)
-#define TASK11_BD_POINT_ARM_COUNT     (7300)
-#define TASK11_STRAIGHT_FORCE_COUNT   (12800)
-#define TASK11_STRAIGHT_POINT_CONFIRM_COUNT (1)
-#define TASK11_ARC_POINT_YAW_ARM_CDEG (14000)
-#define TASK11_GYRO_TURN_TIMEOUT_MS   (1200)
+/*
+ * Race lap control shared by Task3 and Task4.
+ *
+ * These RACE_* values are the live tuning parameters for run_race_laps().
+ * They come from earlier data-collection work and now belong to the shared
+ * Task3/Task4 race path.
+ */
+#define RACE_UART_LOG_ENABLE      (0)
+#define RACE_RAM_LOG_ENABLE       (0)
+#define RACE_RAM_LOG_MAX_LAPS     (5)
+#define RACE_RAM_WINDOW_CAPACITY  (560)
+#define RACE_RAM_EVENT_CAPACITY   (112)
+#define RACE_RAM_SUMMARY_CAPACITY (24)
+#define RACE_RAM_WINDOW_BEFORE_COUNT (1800)
+#define RACE_RAM_WINDOW_AFTER_START_COUNT (1800)
+#define RACE_DUMP_LINE_DELAY_MS   (100)
+#define RACE_DUMP_SECTION_DELAY_MS (1000)
+#define RACE_REALTIME_EVENT_LOG_ENABLE (0)
+#define RACE_POINT_ALARM_MS         (80)
+#define RACE_START_ALARM_MS         (RACE_POINT_ALARM_MS)
+#define RACE_POINT_SETTLE_MS        (120)
+#define RACE_TOTAL_MAX_RUN_MS       (240000)
+#define RACE_LINE_REPORT_PERIOD_MS  (200)
+#define RACE_LINE_BASE_PWM          (560)
+#define RACE_LINE_MIN_PWM           (0)
+#define RACE_LINE_MAX_PWM           (760)
+#define RACE_LINE_TURN_DIVISOR      (9)
+#define RACE_LINE_KD_DIVISOR        (7)
+#define RACE_LINE_DERIV_LIMIT       (700)
+#define RACE_LINE_TURN_LIMIT        (260)
+#define RACE_LINE_ERROR_FILTER_DIVISOR (2)
+#define RACE_LINE_LOST_BASE_DROP    (60)
+#define RACE_LINE_LOST_TURN         (150)
+#define RACE_STRAIGHT_BASE_PWM      (600)
+#define RACE_STRAIGHT_TARGET_DIFF   (0)
+#define RACE_STRAIGHT_GYRO_NAV_ENABLE (1)
+#define RACE_STRAIGHT_IR_ASSIST_ENABLE (0)
+#define RACE_STRAIGHT_IR_ASSIST_DIVISOR (3)
+#define RACE_STRAIGHT_HEADING_CORR_DIVISOR (8)
+#define RACE_STRAIGHT_HEADING_CORR_MAX (140)
+#define RACE_STRAIGHT_GYRO_DAMP_DIVISOR (1600)
+#define RACE_ARC_BASE_PWM           (540)
+#define RACE_CB_ARC_ENTRY_TARGET_DIFF  (-48)
+#define RACE_CB_ARC_CRUISE_TARGET_DIFF (-48)
+#define RACE_DA_ARC_ENTRY_TARGET_DIFF  (46)
+#define RACE_DA_ARC_CRUISE_TARGET_DIFF (46)
+#define RACE_ARC_YAW_NAV_ENABLE     (0)
+#define RACE_ARC_YAW_CORR_DIVISOR   (260)
+#define RACE_ARC_YAW_CORR_MAX       (45)
+#define RACE_ARC_GYRO_DAMP_DIVISOR  (4400)
+#define RACE_DIFF_KP                (PD_TEST_KP)
+#define RACE_DIFF_KD                (PD_TEST_KD)
+#define RACE_DIFF_FF_GAIN           (2)
+#define RACE_DIFF_CORR_MAX          (PD_TEST_CORR_MAX)
+#define RACE_IR_LEFT_EDGE_MASK      (0x03U)
+#define RACE_IR_RIGHT_EDGE_MASK     (0xC0U)
+#define RACE_IR_CENTER_6_MASK       (0x7EU)
+#define RACE_IR_CENTER_6_FORBID_MASK (0x81U)
+#define RACE_IR_TURN_STOP_MIN_COUNT (1)
+#define RACE_LEFT_TURN_B_PWM        (-120)
+#define RACE_LEFT_TURN_A_PWM        (520)
+#define RACE_LEFT_TURN_SLOW_B_PWM   (80)
+#define RACE_LEFT_TURN_SLOW_A_PWM   (360)
+#define RACE_RIGHT_TURN_B_PWM       (520)
+#define RACE_RIGHT_TURN_A_PWM       (120)
+#define RACE_RIGHT_TURN_SLOW_B_PWM  (360)
+#define RACE_RIGHT_TURN_SLOW_A_PWM  (80)
+#define RACE_EXIT_LEFT_TURN_B_PWM   (80)
+#define RACE_EXIT_LEFT_TURN_A_PWM   (440)
+#define RACE_EXIT_LEFT_TURN_SLOW_B_PWM (60)
+#define RACE_EXIT_LEFT_TURN_SLOW_A_PWM (300)
+#define RACE_EXIT_RIGHT_TURN_B_PWM  (440)
+#define RACE_EXIT_RIGHT_TURN_A_PWM  (80)
+#define RACE_EXIT_RIGHT_TURN_SLOW_B_PWM (300)
+#define RACE_EXIT_RIGHT_TURN_SLOW_A_PWM (60)
+#define RACE_FAST_TURN_TIMEOUT_MS   (600)
+#define RACE_FAST_TURN_REPORT_PERIOD_MS (TASK6_C_TURN_REPORT_PERIOD_MS)
+#define RACE_FAST_TURN_GYRO_SLOW_ENABLE (1)
+#define RACE_FAST_TURN_GYRO_SLOW_CDEG (2600)
+#define RACE_EXIT_TURN_YAW_STOP_ENABLE (1)
+#define RACE_TURN_YAW_STOP_TOL_CDEG    (260)
+#define RACE_TURN_YAW_SLOW_ZONE_CDEG   (900)
+#define RACE_TURN_YAW_STOP_GZLP_TOL_MDPS (14000)
+/* Race straight heading targets and point-detection distances. */
+#define RACE_AC_HEADING_TARGET_CDEG (-50)
+#define RACE_BD_HEADING_TARGET_CDEG (-10638)
+#define RACE_TURN_CENTER6_ERROR_MAX (1500)
+#define RACE_POINT_ADVANCE_COUNT    (300)
+#define RACE_ARC_POINT_ADVANCE_COUNT (800)
+#define RACE_POINT_ADVANCE_PWM      (360)
+#define RACE_POINT_ADVANCE_TIMEOUT_MS (800)
+#define RACE_AC_POINT_ARM_COUNT     (7300)
+#define RACE_BD_POINT_ARM_COUNT     (7300)
+#define RACE_STRAIGHT_FORCE_COUNT   (12800)
+#define RACE_STRAIGHT_POINT_CONFIRM_COUNT (1)
+#define RACE_ARC_POINT_YAW_ARM_CDEG (14000)
+#define RACE_GYRO_TURN_TIMEOUT_MS   (1200)
 
 /* 编码器方向符号：统一让前进方向计数为正。 */
+/* Encoder direction signs: normalize forward motion to positive counts. */
 #define ENCODER_MOTOR_A_FORWARD_SIGN (-1)
 #define ENCODER_MOTOR_B_FORWARD_SIGN (1)
 

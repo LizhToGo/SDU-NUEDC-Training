@@ -14,7 +14,7 @@
 
 - `main.c`：保留系统初始化、ISR、任务调度、任务一/二/六/十、竞速编排和运动原语，当前约 4400 行。
 - `race_log.h`：竞速 RAM 日志系统，包含 `race_ram_log_*()`、`RACE_RAM_*` dump 输出和日志存储。
-- `app_config.h`：集中放置调参宏。当前竞速参数宏仍使用 `TASK11_*` 命名，函数和日志前缀已改为 `race_` / `RACE_`。
+- `app_config.h`：集中放置调参宏。当前竞速参数宏已统一使用 `RACE_*` 命名，函数和日志前缀为 `race_` / `RACE_`。
 - `app_control.h`：限幅、斜坡、PID、航向滤波等控制基础工具。
 - `app_motion_utils.h`：角度归一化 `normalize_cdeg()` 和左右轮平均距离工具。
 - `app_services.h/.c`：ST011 声光模块、带 ST011 服务的延时、UART stop 检测。
@@ -40,8 +40,8 @@
 - 已删除旧 Task3/4 死代码：`run_task3_acbda()`、`run_task4_lap()`、`run_task4_four_laps()` 等。
 - 已删除旧 `run_task3_race_arc_line_follow_segment()` 残留。
 - `run_task11_ir_map_test_laps()` 已改名为 `run_race_laps()`。
-- 实现层 `task11_*` 已重命名为 `race_*`，日志前缀由 `TASK11_*` 改为 `RACE_*`。
-- `app_config.h` 中只清理了确认冗余的 6 个 `TASK11_*` 别名；其它 `TASK11_*` 参数仍是当前竞速路径实际配置。
+- 实现层 `task11_*` 已重命名为 `race_*`，日志前缀已统一为 `RACE_*`。
+- `app_config.h` 中竞速相关参数已统一为 `RACE_*` 前缀，这些参数仍是当前竞速路径实际配置。
 - 已消除 `bsp_encoder.h` 部分重复逻辑。
 - 已减少 `task5_ram_log_sample()` 参数数量。
 - `race_log.h` 已从 `main.c` 抽出，当前代码质量总分约 `61.44/100`，`main.c` 仍是后续重构重点。
@@ -49,6 +49,6 @@
 ## 调参提醒
 
 - 任务一/任务二 AB 主要看 `run_straight_to_line_segment()` 和 `app_straight.h`。
-- 任务三/四当前入口走竞速路径，优先看 `run_race_laps()`、`race_*` helper、`TASK11_*` 竞速参数、`TASK3_AC_HEADING_TARGET_CDEG`、`TASK3_BD_HEADING_TARGET_CDEG`。
+- 任务三/四当前入口走竞速路径，优先看 `run_race_laps()`、`race_*` helper、`RACE_*` 竞速参数、`TASK3_AC_HEADING_TARGET_CDEG`、`TASK3_BD_HEADING_TARGET_CDEG`。
 - 串口日志太密会影响实车控制，竞速大体量日志优先使用 RAM dump 后处理。
-- 旧文档中关于 UART `11`、`run_task11_ir_map_test_laps()`、`TASK11_DATA/TASK11_RAM_END` 的描述需要按当前 `03/04 + run_race_laps + RACE_*` 理解。
+- 旧文档中关于 UART `11`、`run_task11_ir_map_test_laps()`、`RACE_DATA/RACE_RAM_END` 的描述需要按当前 `03/04 + run_race_laps + RACE_*` 理解。

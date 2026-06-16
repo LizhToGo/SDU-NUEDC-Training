@@ -6,6 +6,9 @@
 #include "app_config.h"
 
 /* 直行 PID 状态。系数使用整数定点，最终统一除以 STRAIGHT_PID_SCALE。 */
+/**
+ * @brief Integer PID state for wheel-speed difference control.
+ */
 typedef struct {
     int32_t kp;
     int32_t ki;
@@ -17,6 +20,9 @@ typedef struct {
 } straight_pid_t;
 
 /* 航向经验滤波状态，用来抑制车身短时晃动带来的 JY62 误修正。 */
+/**
+ * @brief Low-pass filter state for heading correction.
+ */
 typedef struct {
     int32_t filtered_cdeg;
     uint8_t initialized;
@@ -46,6 +52,9 @@ static inline int32_t ramp_i32(int32_t start_value, int32_t target_value, uint32
     return start_value + (((target_value - start_value) * (int32_t)elapsed_ms) / (int32_t)ramp_ms);
 }
 
+/**
+ * @brief Absolute value helper for signed 32-bit integers.
+ */
 static inline int32_t abs_i32(int32_t value)
 {
     return (value < 0) ? -value : value;
@@ -63,6 +72,9 @@ static inline void straight_pid_reset(straight_pid_t *pid)
     pid->last_error = 0;
 }
 
+/**
+ * @brief Override PID integral and output limits after reset.
+ */
 static inline void straight_pid_set_limits(straight_pid_t *pid,
     int32_t i_limit,
     int32_t corr_max)
@@ -72,6 +84,9 @@ static inline void straight_pid_set_limits(straight_pid_t *pid,
     pid->integral = clamp_i32(pid->integral, -pid->i_limit, pid->i_limit);
 }
 
+/**
+ * @brief Reset heading low-pass filter state.
+ */
 static inline void heading_filter_reset(heading_filter_t *filter)
 {
     filter->filtered_cdeg = 0;
@@ -79,6 +94,9 @@ static inline void heading_filter_reset(heading_filter_t *filter)
 }
 
 /* 根据 Z 轴角速度给航向修正降权：慢速偏航保留，高速晃动逐步压掉。 */
+/**
+ * @brief Reduce heading correction gain when gyro motion is too large.
+ */
 static inline int32_t heading_filter_gain_from_gyro(int32_t gyro_z_filtered_mdps)
 {
     int32_t gyro_abs = abs_i32(gyro_z_filtered_mdps);
@@ -100,6 +118,9 @@ static inline int32_t heading_filter_gain_from_gyro(int32_t gyro_z_filtered_mdps
  * 1. rel_cdeg 先做一阶低通，得到稳定航向误差；
  * 2. |gzlp_mdps| 较大时改用更慢的低通，并降低修正增益；
  * 3. 小于死区的误差直接归零，避免小抖动来回打方向。
+ */
+/**
+ * @brief Low-pass and gate raw heading error before yaw correction.
  */
 static inline int32_t heading_filter_update(heading_filter_t *filter,
     int32_t raw_heading_cdeg,
@@ -137,6 +158,9 @@ static inline int32_t heading_filter_update(heading_filter_t *filter,
 /*
  * PID 目标：让 B_spd - A_spd 接近 target_speed_diff。
  * correction 为正表示 B 轮相对目标偏快，因此会降低 B 轮 PWM、提高 A 轮 PWM。
+ */
+/**
+ * @brief Update wheel-speed-difference PID and return PWM correction.
  */
 static inline int32_t straight_pid_update(straight_pid_t *pid,
     int32_t motor_b_speed,

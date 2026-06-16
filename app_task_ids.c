@@ -18,11 +18,15 @@ typedef struct {
     task_id_t task_id;
 } task_uart_command_map_t;
 
+/**
+ * @brief Small parser buffer for ASCII commands such as "03" and "t10".
+ */
 typedef struct {
     uint8_t frame_buf[3];
     uint8_t frame_len;
 } task_uart_parse_state_t;
 
+/* Decimal command table shared by ASCII input paths. */
 static const task_uart_command_map_t g_task_uart_number_map[] = {
     {0U, TASK_ID_STOP},
     {1U, TASK_ID_1},
@@ -35,6 +39,7 @@ static const task_uart_command_map_t g_task_uart_number_map[] = {
     {10U, TASK_ID_10},
 };
 
+/* Binary command table for raw UART bytes. */
 static const task_uart_command_map_t g_task_uart_binary_map[] = {
     {0x01U, TASK_ID_1},
     {0x02U, TASK_ID_2},
@@ -46,6 +51,9 @@ static const task_uart_command_map_t g_task_uart_binary_map[] = {
     {0x10U, TASK_ID_10},
 };
 
+/**
+ * @brief Find a task id in one of the static UART command tables.
+ */
 static task_id_t task_uart_lookup_command(
     const task_uart_command_map_t *map,
     uint32_t map_len,
@@ -62,22 +70,34 @@ static task_id_t task_uart_lookup_command(
     return TASK_ID_NONE;
 }
 
+/**
+ * @brief Reset the incremental ASCII parser state.
+ */
 static void task_uart_parse_reset(task_uart_parse_state_t *state)
 {
     state->frame_len = 0U;
 }
 
+/**
+ * @brief Return 1 for whitespace characters that terminate an ASCII command.
+ */
 static uint8_t task_uart_is_terminator(uint8_t ch)
 {
     return ((ch == '\r') || (ch == '\n') || (ch == ' ') || (ch == '\t')) ? 1U : 0U;
 }
 
+/**
+ * @brief Return 1 while the parser has only seen the optional 't' prefix.
+ */
 static uint8_t task_uart_is_prefix_wait(const task_uart_parse_state_t *state)
 {
     return ((state->frame_len == 1U) &&
         ((state->frame_buf[0] == 't') || (state->frame_buf[0] == 'T'))) ? 1U : 0U;
 }
 
+/**
+ * @brief Convert two ASCII digits to a task id.
+ */
 static task_id_t task_uart_finish_decimal(uint8_t tens, uint8_t ones)
 {
     uint8_t value = (uint8_t)(((tens - '0') * 10U) + (ones - '0'));
@@ -85,6 +105,9 @@ static task_id_t task_uart_finish_decimal(uint8_t tens, uint8_t ones)
     return task_uart_command_from_number(value);
 }
 
+/**
+ * @brief Convert a decimal command number into a task id.
+ */
 task_id_t task_uart_command_from_number(uint8_t number)
 {
     return task_uart_lookup_command(g_task_uart_number_map,
@@ -92,6 +115,9 @@ task_id_t task_uart_command_from_number(uint8_t number)
         number);
 }
 
+/**
+ * @brief Convert a raw binary command byte into a task id.
+ */
 task_id_t task_uart_command_from_hex_byte(uint8_t value)
 {
     return task_uart_lookup_command(g_task_uart_binary_map,
@@ -99,6 +125,9 @@ task_id_t task_uart_command_from_hex_byte(uint8_t value)
         value);
 }
 
+/**
+ * @brief Parse non-printable UART bytes, including binary task commands.
+ */
 static task_id_t task_uart_parse_control_byte(task_uart_parse_state_t *state,
     uint8_t ch)
 {
@@ -117,6 +146,9 @@ static task_id_t task_uart_parse_control_byte(task_uart_parse_state_t *state,
     return TASK_ID_NONE;
 }
 
+/**
+ * @brief Consume one decimal digit in the ASCII task command parser.
+ */
 static task_id_t task_uart_parse_decimal_digit(task_uart_parse_state_t *state,
     uint8_t ch)
 {
@@ -150,6 +182,9 @@ static task_id_t task_uart_parse_decimal_digit(task_uart_parse_state_t *state,
     return TASK_ID_NONE;
 }
 
+/**
+ * @brief Parse one UART byte and return a completed command if available.
+ */
 static task_id_t task_uart_parse_byte(task_uart_parse_state_t *state,
     uint8_t ch,
     uint8_t allow_binary_stop)
@@ -180,6 +215,9 @@ static task_id_t task_uart_parse_byte(task_uart_parse_state_t *state,
     return task_uart_parse_decimal_digit(state, ch);
 }
 
+/**
+ * @brief Poll UART0 until its FIFO is empty and return the first full command.
+ */
 task_id_t task_uart_read_command(uint8_t allow_binary_stop)
 {
     static task_uart_parse_state_t parse_state = {{0U, 0U, 0U}, 0U};
@@ -196,11 +234,17 @@ task_id_t task_uart_read_command(uint8_t allow_binary_stop)
     return TASK_ID_NONE;
 }
 
+/**
+ * @brief Read one active-low button pin.
+ */
 static uint8_t task_button_pin_is_pressed(GPIO_Regs *port, uint32_t pin)
 {
     return ((DL_GPIO_readPins(port, pin) & pin) == 0U) ? 1U : 0U;
 }
 
+/**
+ * @brief Convert the four physical task buttons into task ids.
+ */
 static task_id_t task_button_read(void)
 {
     if (task_button_pin_is_pressed(KEYS_A_PORT, KEYS_A_KEY1_PIN) != 0U) {
@@ -222,6 +266,9 @@ static task_id_t task_button_read(void)
     return TASK_ID_NONE;
 }
 
+/**
+ * @brief Block until a UART command or debounced button press selects a task.
+ */
 task_id_t wait_task_uart_command(void)
 {
     task_id_t task_id;

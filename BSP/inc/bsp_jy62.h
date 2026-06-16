@@ -47,6 +47,9 @@
 #define JY62_UART_RX_INTERRUPTS \
     (DL_UART_MAIN_INTERRUPT_RX | JY62_UART_ERROR_INTERRUPTS)
 
+/**
+ * @brief Raw decoded JY62 frames plus parser/statistics counters.
+ */
 typedef struct {
     int16_t acc_raw[3];       /* 原始加速度：换算为 g 时 raw / 32768 * 16。 */
     int16_t gyro_raw[3];      /* 原始角速度：换算为 deg/s 时 raw / 32768 * 2000。 */
@@ -68,6 +71,9 @@ typedef struct {
     uint32_t overrun_count;   /* UART1 FIFO 溢出累计次数，非 0 说明主循环轮询接收来不及。 */
 } jy62_sample_t;
 
+/**
+ * @brief Navigation-friendly JY62 output used by car control code.
+ */
 typedef struct {
     int32_t yaw_cdeg;             /* 原始偏航角，单位 0.01 度，范围约为 -18000 到 +18000。 */
     int32_t yaw_relative_cdeg;    /* 以上电后第一次有效 yaw 为零点的相对偏航角，单位 0.01 度。 */
@@ -95,31 +101,49 @@ static uint8_t g_jy62_yaw_zero_valid;
 static uint8_t g_jy62_gyro_z_filter_valid;
 static jy62_sample_t g_jy62_sample;
 
+/**
+ * @brief Convert little-endian frame bytes into signed int16.
+ */
 static int16_t JY62_MakeI16(uint8_t low, uint8_t high)
 {
     return (int16_t)((uint16_t)low | ((uint16_t)high << 8));
 }
 
+/**
+ * @brief Absolute value helper for JY62 calculations.
+ */
 static int32_t JY62_Abs32(int32_t value)
 {
     return (value < 0) ? -value : value;
 }
 
+/**
+ * @brief Convert raw acceleration to milli-g.
+ */
 static int32_t JY62_RawToAccMg(int16_t raw)
 {
     return (int32_t)(((int64_t)raw * 16000LL) / 32768LL);
 }
 
+/**
+ * @brief Convert raw gyro reading to milli-degrees per second.
+ */
 static int32_t JY62_RawToGyroMdps(int16_t raw)
 {
     return (int32_t)(((int64_t)raw * 2000000LL) / 32768LL);
 }
 
+/**
+ * @brief Convert raw angle reading to centi-degrees.
+ */
 static int32_t JY62_RawToAngleCdeg(int16_t raw)
 {
     return (int32_t)(((int64_t)raw * 18000LL) / 32768LL);
 }
 
+/**
+ * @brief Normalize a centi-degree angle into +/-180 degrees.
+ */
 static int32_t JY62_NormalizeAngleCdeg(int32_t angle_cdeg)
 {
     if (angle_cdeg > 18000L) {
@@ -131,6 +155,9 @@ static int32_t JY62_NormalizeAngleCdeg(int32_t angle_cdeg)
     return angle_cdeg;
 }
 
+/**
+ * @brief Print a signed fixed-point value without using floating point.
+ */
 static void JY62_PrintSignedFixed(int32_t value, uint16_t scale, uint8_t digits)
 {
     int32_t abs_value = JY62_Abs32(value);
@@ -148,6 +175,9 @@ static void JY62_PrintSignedFixed(int32_t value, uint16_t scale, uint8_t digits)
     }
 }
 
+/**
+ * @brief Verify the JY62 10-byte sum checksum.
+ */
 static uint8_t JY62_ChecksumOk(const uint8_t *frame)
 {
     uint8_t sum = 0U;
@@ -160,6 +190,9 @@ static uint8_t JY62_ChecksumOk(const uint8_t *frame)
     return (sum == frame[JY62_FRAME_LEN - 1U]) ? 1U : 0U;
 }
 
+/**
+ * @brief Recover parser alignment after a bad or partial frame.
+ */
 static void JY62_ResyncFrame(void)
 {
     uint8_t next_header_index;
@@ -182,6 +215,9 @@ static void JY62_ResyncFrame(void)
     }
 }
 
+/**
+ * @brief Store recent raw bytes for UART/protocol diagnostics.
+ */
 static void JY62_SaveRecentByte(uint8_t data)
 {
     g_jy62_sample.recent_raw[g_jy62_sample.raw_write_index] = data;
@@ -195,6 +231,9 @@ static void JY62_SaveRecentByte(uint8_t data)
     }
 }
 
+/**
+ * @brief Decode one checksum-valid JY62 frame into the sample cache.
+ */
 static void JY62_ParseFrame(const uint8_t *frame)
 {
     int16_t value0 = JY62_MakeI16(frame[2], frame[3]);
@@ -254,6 +293,9 @@ static void JY62_ParseFrame(const uint8_t *frame)
     }
 }
 
+/**
+ * @brief Feed one UART byte into the JY62 frame parser.
+ */
 static void JY62_PushByte(uint8_t data)
 {
     g_jy62_sample.rx_byte_count++;
@@ -284,6 +326,9 @@ static void JY62_PushByte(uint8_t data)
     }
 }
 
+/**
+ * @brief Drain UART1 RX FIFO and push every byte into the parser.
+ */
 static void JY62_DrainRxFifo(void)
 {
     while (DL_UART_Main_isRXFIFOEmpty(UART_1_INST) == false) {
@@ -291,6 +336,9 @@ static void JY62_DrainRxFifo(void)
     }
 }
 
+/**
+ * @brief Record UART1 hardware error counters.
+ */
 static void JY62_RecordUartError(uint8_t is_overrun)
 {
     g_jy62_sample.uart_error_count++;
@@ -299,6 +347,9 @@ static void JY62_RecordUartError(uint8_t is_overrun)
     }
 }
 
+/**
+ * @brief Enable UART1 RX and error interrupts for JY62.
+ */
 static void JY62_EnableRxInterrupt(void)
 {
     /*
@@ -316,6 +367,9 @@ static void JY62_EnableRxInterrupt(void)
     NVIC_EnableIRQ(UART_1_INST_INT_IRQN);
 }
 
+/**
+ * @brief Reset parser/cache state and enable JY62 UART receiving.
+ */
 static void JY62_Init(void)
 {
     uint8_t index;
@@ -354,6 +408,9 @@ static void JY62_Init(void)
     JY62_EnableRxInterrupt();
 }
 
+/**
+ * @brief Poll accumulated parser state into a raw sample snapshot.
+ */
 static uint32_t JY62_Poll(jy62_sample_t *sample)
 {
     uint32_t frame_delta;
@@ -370,6 +427,9 @@ static uint32_t JY62_Poll(jy62_sample_t *sample)
     return frame_delta;
 }
 
+/**
+ * @brief Set the current yaw as software zero when angle data is valid.
+ */
 static void JY62_SetYawZeroToCurrent(void)
 {
     __disable_irq();
@@ -378,6 +438,9 @@ static void JY62_SetYawZeroToCurrent(void)
     __enable_irq();
 }
 
+/**
+ * @brief Poll and convert JY62 data into navigation fields for controllers.
+ */
 static uint32_t JY62_GetNavigation(jy62_navigation_t *nav)
 {
     jy62_sample_t sample;
@@ -418,6 +481,9 @@ static uint32_t JY62_GetNavigation(jy62_navigation_t *nav)
     return frame_delta;
 }
 
+/**
+ * @brief Read navigation fields without resetting update-frame accounting.
+ */
 static uint8_t JY62_PeekNavigation(jy62_navigation_t *nav)
 {
     jy62_sample_t sample;
@@ -454,6 +520,9 @@ static uint8_t JY62_PeekNavigation(jy62_navigation_t *nav)
     return (nav != 0) ? nav->valid : 0U;
 }
 
+/**
+ * @brief UART1 ISR entry used by main.c to service JY62 bytes/errors.
+ */
 static void JY62_UART1_IRQHandler(void)
 {
     DL_UART_IIDX pending;
@@ -506,6 +575,9 @@ static void JY62_UART1_IRQHandler(void)
     } while (pending != DL_UART_MAIN_IIDX_NO_INTERRUPT);
 }
 
+/**
+ * @brief Print raw decoded JY62 sample values for diagnostics.
+ */
 static void JY62_PrintSample(const jy62_sample_t *sample)
 {
     int32_t acc_x = JY62_RawToAccMg(sample->acc_raw[0]);
@@ -525,6 +597,9 @@ static void JY62_PrintSample(const jy62_sample_t *sample)
     JY62_PrintSignedFixed(gyro_z, 1000U, 3U);
 }
 
+/**
+ * @brief Print navigation-friendly JY62 values for diagnostics.
+ */
 static void JY62_PrintNavigation(const jy62_navigation_t *nav)
 {
     lc_printf("ok=%u yaw=", nav->valid);
@@ -537,6 +612,9 @@ static void JY62_PrintNavigation(const jy62_navigation_t *nav)
     JY62_PrintSignedFixed(nav->gyro_z_filtered_mdps, 1000U, 3U);
 }
 
+/**
+ * @brief Print the recent raw UART byte ring buffer.
+ */
 static void JY62_PrintRecentRaw(const jy62_sample_t *sample)
 {
     uint8_t index;

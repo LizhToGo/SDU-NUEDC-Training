@@ -5,8 +5,12 @@
 #include "app_task_ids.h"
 #include "board.h"
 
+/* Remaining duration for the currently active ST011 pulse. */
 static uint32_t g_st011_pulse_remaining_ms;
 
+/**
+ * @brief Drive the ST011 trigger pin according to the configured polarity.
+ */
 void st011_set_active(uint8_t active)
 {
 #if ST011_ACTIVE_LOW
@@ -24,6 +28,9 @@ void st011_set_active(uint8_t active)
 #endif
 }
 
+/**
+ * @brief Decrease pending pulse time and switch the ST011 output off at zero.
+ */
 void st011_service(uint32_t elapsed_ms)
 {
     if (g_st011_pulse_remaining_ms == 0U) {
@@ -38,6 +45,9 @@ void st011_service(uint32_t elapsed_ms)
     }
 }
 
+/**
+ * @brief Delay in chunks so a pending ST011 pulse can finish at the right time.
+ */
 void delay_ms_with_st011(uint32_t total_ms)
 {
     while (total_ms > 0U) {
@@ -54,6 +64,9 @@ void delay_ms_with_st011(uint32_t total_ms)
     }
 }
 
+/**
+ * @brief Begin a non-blocking sound/light pulse.
+ */
 void st011_start_pulse(uint32_t pulse_ms)
 {
     if (pulse_ms == 0U) {
@@ -64,12 +77,18 @@ void st011_start_pulse(uint32_t pulse_ms)
     st011_set_active(1U);
 }
 
+/**
+ * @brief Emit one blocking sound/light pulse.
+ */
 void st011_pulse(uint32_t pulse_ms)
 {
     st011_start_pulse(pulse_ms);
     delay_ms_with_st011(pulse_ms);
 }
 
+/**
+ * @brief Block until the current non-blocking sound/light pulse has completed.
+ */
 void st011_finish_pending_pulse(void)
 {
     if (g_st011_pulse_remaining_ms != 0U) {
@@ -77,6 +96,9 @@ void st011_finish_pending_pulse(void)
     }
 }
 
+/**
+ * @brief Check UART0 for an in-run stop command without consuming task starts.
+ */
 uint8_t task_uart_stop_requested(void)
 {
     return (task_uart_read_command(1U) == TASK_ID_STOP) ? 1U : 0U;

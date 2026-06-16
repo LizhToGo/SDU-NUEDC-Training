@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Append received TASK11 UART text into cumulative local CSV files.
+"""Append received RACE UART text into cumulative local CSV files.
 
 The serial receiver may split one MCU log line into several timestamped chunks.
-This script rebuilds full TASK11_* records, validates seq/idx continuity, and
+This script rebuilds full RACE_* records, validates seq/idx continuity, and
 appends raw records plus run/segment/turn summaries for Task3/Task4 tuning.
 """
 
@@ -207,15 +207,15 @@ def strip_timestamp(line: str) -> str:
     return TIMESTAMP_RE.sub("", line.rstrip("\r\n"))
 
 
-def rebuild_task11_records(text: str) -> list[str]:
-    """Rebuild complete TASK11_* records from timestamped receiver chunks."""
+def rebuild_race_records(text: str) -> list[str]:
+    """Rebuild complete RACE_* records from timestamped receiver chunks."""
 
     records: list[str] = []
     current: str | None = None
 
     for raw_line in text.splitlines():
         payload = strip_timestamp(raw_line)
-        if "TASK11_" in payload:
+        if "RACE_" in payload:
             if current is not None:
                 records.append(current.strip())
             current = payload.lstrip()
@@ -302,14 +302,14 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
     lines: list[str] = []
     ok = True
 
-    begin_rows = by_type(rows, "TASK11_RAM_BEGIN")
-    cfg_rows = by_type(rows, "TASK11_CFG")
-    event_rows = by_type(rows, "TASK11_EVT")
-    sum_rows = by_type(rows, "TASK11_SUM")
-    win_rows = by_type(rows, "TASK11_WIN")
-    end_rows = by_type(rows, "TASK11_RAM_END")
-    section_rows = by_type(rows, "TASK11_DUMP_SECTION")
-    section_end_rows = by_type(rows, "TASK11_DUMP_SECTION_END")
+    begin_rows = by_type(rows, "RACE_RAM_BEGIN")
+    cfg_rows = by_type(rows, "RACE_CFG")
+    event_rows = by_type(rows, "RACE_EVT")
+    sum_rows = by_type(rows, "RACE_SUM")
+    win_rows = by_type(rows, "RACE_WIN")
+    end_rows = by_type(rows, "RACE_RAM_END")
+    section_rows = by_type(rows, "RACE_DUMP_SECTION")
+    section_end_rows = by_type(rows, "RACE_DUMP_SECTION_END")
 
     lines.append(f"records={len(rows)}")
     lines.append(f"ram_begin={len(begin_rows)} cfg={len(cfg_rows)} ram_end={len(end_rows)}")
@@ -579,11 +579,11 @@ def build_run_summary_row(
     metadata: dict[str, str],
     validation_ok: bool,
 ) -> dict[str, str]:
-    begin = by_type(rows, "TASK11_RAM_BEGIN")
-    cfg = by_type(rows, "TASK11_CFG")
-    events = by_type(rows, "TASK11_EVT")
-    sums = by_type(rows, "TASK11_SUM")
-    wins = by_type(rows, "TASK11_WIN")
+    begin = by_type(rows, "RACE_RAM_BEGIN")
+    cfg = by_type(rows, "RACE_CFG")
+    events = by_type(rows, "RACE_EVT")
+    sums = by_type(rows, "RACE_SUM")
+    wins = by_type(rows, "RACE_WIN")
     complete = next((row for row in events if row.get("event") == "complete"), {})
     seq_values = [int_value(row, "seq") for row in rows if "seq" in row]
     begin_row = begin[0] if begin else {}
@@ -627,7 +627,7 @@ def build_run_summary_row(
 
 
 def build_turn_rows(rows: list[dict[str, str]], metadata: dict[str, str]) -> list[dict[str, str]]:
-    events = by_type(rows, "TASK11_EVT")
+    events = by_type(rows, "RACE_EVT")
     turn_stops = {
         (row.get("lap"), row.get("seg")): row
         for row in events
@@ -679,7 +679,7 @@ def append_summary_text(
             if mode == "a":
                 file.write("\n")
             file.write(
-                f"=== TASK11_RUN run_id={metadata['run_id']} "
+                f"=== RACE_RUN run_id={metadata['run_id']} "
                 f"imported_at={metadata['imported_at']} "
                 f"source={metadata['source_file']} "
                 f"validation_ok={int(validation_ok)} ===\n"
@@ -692,7 +692,7 @@ def append_summary_text(
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Rebuild received TASK11 UART logs and append structured CSV data."
+        description="Rebuild received RACE UART logs and append structured CSV data."
     )
     parser.add_argument("log_path", help="Received UART text log file.")
     parser.add_argument(
@@ -709,7 +709,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--segments-output",
         default="data/task11_experience_segments.csv",
-        help="Cumulative TASK11_SUM segment CSV.",
+        help="Cumulative RACE_SUM segment CSV.",
     )
     parser.add_argument(
         "--turns-output",
@@ -729,7 +729,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--run-id",
         default=None,
-        help="Run id to store. Default: task11_<content-hash>.",
+        help="Run id to store. Default: race_<content-hash>.",
     )
     parser.add_argument(
         "--replace",
@@ -765,11 +765,11 @@ def main(argv: list[str]) -> int:
         print(f"error: failed to read input log {log_path}: {exc}", file=sys.stderr)
         return 2
 
-    records = rebuild_task11_records(text)
+    records = rebuild_race_records(text)
     rows = records_to_rows(records)
     summary_lines, validation_ok = build_validation(rows)
     digest = log_hash(records)
-    run_id = args.run_id or f"task11_{digest}"
+    run_id = args.run_id or f"race_{digest}"
     metadata = {
         "run_id": run_id,
         "imported_at": datetime.now().isoformat(timespec="seconds"),
@@ -782,7 +782,7 @@ def main(argv: list[str]) -> int:
     try:
         already_imported = run_id in existing_values(runs_output_path, "run_id")
     except (OSError, ValueError, csv.Error) as exc:
-        print(f"error: failed to check existing TASK11 runs: {exc}", file=sys.stderr)
+        print(f"error: failed to check existing RACE runs: {exc}", file=sys.stderr)
         return 2
 
     if not args.replace and not args.allow_duplicate and already_imported:
@@ -794,7 +794,7 @@ def main(argv: list[str]) -> int:
 
     record_rows = add_metadata(rows, metadata)
     run_rows = [build_run_summary_row(rows, metadata, validation_ok)]
-    segment_rows = add_metadata(by_type(rows, "TASK11_SUM"), metadata)
+    segment_rows = add_metadata(by_type(rows, "RACE_SUM"), metadata)
     turn_rows = build_turn_rows(rows, metadata)
 
     try:
@@ -804,7 +804,7 @@ def main(argv: list[str]) -> int:
         append_csv_rows(turn_rows, turns_output_path, TURN_COLUMNS, replace=args.replace)
         append_summary_text(summary_path, summary_lines, metadata, validation_ok, args.replace)
     except (OSError, ValueError, csv.Error) as exc:
-        print(f"error: failed to write TASK11 outputs: {exc}", file=sys.stderr)
+        print(f"error: failed to write RACE outputs: {exc}", file=sys.stderr)
         return 2
 
     print(f"input={log_path}")

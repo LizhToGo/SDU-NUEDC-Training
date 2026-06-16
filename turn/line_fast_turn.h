@@ -1,6 +1,15 @@
 #ifndef LINE_FAST_TURN_H
 #define LINE_FAST_TURN_H
 
+/**
+ * @file line_fast_turn.h
+ * @brief Fast line-triggered turn helper.
+ *
+ * Used by the C/D point fast-turn tests and handoff logic after a straight
+ * segment reaches a line. The implementation remains header-only for the
+ * current CCS generated build layout.
+ */
+
 #include <stdint.h>
 
 #include "app_config.h"
@@ -13,6 +22,9 @@
 #include "bsp_jy62.h"
 #include "bsp_tb6612.h"
 
+/**
+ * @brief Configuration for the quick C/D line handoff turn.
+ */
 typedef struct {
     const char *tag;
     uint32_t ac_elapsed_ms;
@@ -29,6 +41,9 @@ typedef struct {
     uint8_t report_samples;
 } line_fast_turn_config_t;
 
+/**
+ * @brief Check whether yaw progress has reached the configured turn target.
+ */
 static uint8_t line_fast_turn_target_reached(int32_t turn_target_cdeg,
     int32_t turn_cdeg)
 {
@@ -36,6 +51,9 @@ static uint8_t line_fast_turn_target_reached(int32_t turn_target_cdeg,
         ((turn_target_cdeg < 0) && (turn_cdeg <= turn_target_cdeg))) ? 1U : 0U;
 }
 
+/**
+ * @brief Check whether line-stop criteria are satisfied during a fast turn.
+ */
 static uint8_t line_fast_turn_line_stop_ready(
     const line_fast_turn_config_t *config,
     int32_t turn_abs,
@@ -50,6 +68,9 @@ static uint8_t line_fast_turn_line_stop_ready(
         (sample->active_count >= TASK6_C_TURN_LINE_STOP_MIN_COUNT)) ? 1U : 0U;
 }
 
+/**
+ * @brief Decide whether the turn routine should brake when it finishes.
+ */
 static uint8_t line_fast_turn_brake_required(
     const line_fast_turn_config_t *config,
     uint8_t stop_reason)
@@ -58,6 +79,9 @@ static uint8_t line_fast_turn_brake_required(
         ((stop_reason != 1U) && (stop_reason != 5U))) ? 1U : 0U;
 }
 
+/**
+ * @brief Apply the handoff PWM command used when finishing without braking.
+ */
 static void line_fast_turn_apply_finish_drive(
     const line_fast_turn_config_t *config,
     uint8_t stop_reason)
@@ -82,6 +106,9 @@ static void line_fast_turn_apply_finish_drive(
     }
 }
 
+/**
+ * @brief Execute a timed/yaw-measured fast turn with optional IR line stop.
+ */
 static uint8_t run_line_fast_turn(const line_fast_turn_config_t *config)
 {
     const char *tag = config->tag;

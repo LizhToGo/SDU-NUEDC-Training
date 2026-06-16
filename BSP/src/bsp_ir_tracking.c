@@ -7,6 +7,9 @@
 static int16_t g_ir_tracking_last_error;
 
 /* 等待 I2C 控制器进入空闲状态。 */
+/**
+ * @brief Wait until the I2C controller enters idle state.
+ */
 static uint8_t IRTracking_WaitIdle(void)
 {
     uint32_t timeout = IR_TRACKING_I2C_TIMEOUT;
@@ -22,6 +25,9 @@ static uint8_t IRTracking_WaitIdle(void)
 }
 
 /* 等待 I2C 总线释放。SDA/SCL 被外部拉住或模块异常时可能超时。 */
+/**
+ * @brief Wait until the I2C bus is no longer busy.
+ */
 static uint8_t IRTracking_WaitBusFree(void)
 {
     uint32_t timeout = IR_TRACKING_I2C_TIMEOUT;
@@ -37,6 +43,9 @@ static uint8_t IRTracking_WaitBusFree(void)
 }
 
 /* 检查 I2C 控制器是否报告错误，例如无应答或总线错误。 */
+/**
+ * @brief Return whether the I2C controller reports a bus error.
+ */
 static uint8_t IRTracking_HasBusError(void)
 {
     return ((DL_I2C_getControllerStatus(I2C_0_INST) & DL_I2C_CONTROLLER_STATUS_ERROR) != 0U) ? 1U : 0U;
@@ -47,6 +56,9 @@ static uint8_t IRTracking_HasBusError(void)
  *
  * X1 到 X8 从左到右排列，权重从 -3500 到 +3500。
  * 多个探头同时压线时取平均值，所以中心两个探头 X4/X5 同时压线时结果为 0。
+ */
+/**
+ * @brief Calculate weighted line position from the normalized black-line mask.
  */
 static int16_t IRTracking_CalculatePosition(uint8_t line_mask, uint8_t *active_count)
 {
@@ -74,12 +86,18 @@ static int16_t IRTracking_CalculatePosition(uint8_t line_mask, uint8_t *active_c
     return (int16_t)(weighted_sum / (int32_t)count);
 }
 
+/**
+ * @brief Reset the stored last-valid line error.
+ */
 void IRTracking_Init(void)
 {
     /* 上电初始默认认为线在中心。 */
     g_ir_tracking_last_error = 0;
 }
 
+/**
+ * @brief Perform the I2C write-register-address then read-one-byte transaction.
+ */
 uint8_t IRTracking_ReadRegister(uint8_t reg, uint8_t *value)
 {
     if (value == 0) {
@@ -119,11 +137,17 @@ uint8_t IRTracking_ReadRegister(uint8_t reg, uint8_t *value)
     return 1U;
 }
 
+/**
+ * @brief Read the IR module raw digital register.
+ */
 uint8_t IRTracking_ReadRaw(uint8_t *raw)
 {
     return IRTracking_ReadRegister(IR_TRACKING_DATA_REG, raw);
 }
 
+/**
+ * @brief Map raw active-low X1..X8 bits into active-high bit0..bit7 mask.
+ */
 uint8_t IRTracking_RawToLineMask(uint8_t raw)
 {
     uint8_t line_mask = 0U;
@@ -145,6 +169,9 @@ uint8_t IRTracking_RawToLineMask(uint8_t raw)
     return line_mask;
 }
 
+/**
+ * @brief Read raw state and fill a decoded tracking sample.
+ */
 uint8_t IRTracking_ReadSample(ir_tracking_sample_t *sample)
 {
     uint8_t raw;
@@ -179,11 +206,17 @@ uint8_t IRTracking_ReadSample(ir_tracking_sample_t *sample)
     return 1U;
 }
 
+/**
+ * @brief Return the most recent valid weighted line error.
+ */
 int16_t IRTracking_GetLastError(void)
 {
     return g_ir_tracking_last_error;
 }
 
+/**
+ * @brief Print one decoded IR tracking sample.
+ */
 void IRTracking_PrintSample(const ir_tracking_sample_t *sample)
 {
     if (sample == 0) {

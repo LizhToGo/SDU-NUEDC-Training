@@ -1,0 +1,896 @@
+#ifndef RACE_PRIMITIVES_H
+#define RACE_PRIMITIVES_H
+
+/**
+ * @file race_primitives.h
+ * @brief Race control primitive actions and math helpers.
+ *
+ * This header is included from race_laps.h after race_context_t-related helpers are declared.
+ */
+
+#include <stdint.h>
+
+#include "app_config.h"
+#include "app_control.h"
+#include "app_motion_utils.h"
+#include "app_services.h"
+#include "app_straight.h"
+#include "board.h"
+#include "bsp_encoder.h"
+#include "bsp_ir_tracking.h"
+#include "bsp_jy62.h"
+#include "bsp_tb6612.h"
+
+/**
+ * @brief Read current relative yaw and filtered gyro-Z from JY62.
+ */
+static uint8_t race_peek_yaw(int32_t *yaw_cdeg, int32_t *gyro_z_filtered_mdps)
+{
+    jy62_navigation_t nav;
+    uint8_t nav_ok = JY62_PeekNavigation(&nav);
+
+    if (nav_ok != 0U) {
+        *yaw_cdeg = nav.yaw_relative_cdeg;
+        *gyro_z_filtered_mdps = nav.gyro_z_filtered_mdps;
+    } else {
+        *yaw_cdeg = 0;
+        *gyro_z_filtered_mdps = 0;
+    }
+
+    return nav_ok;
+}
+
+/**
+ * @brief Print one short point-result line for race debugging.
+ */
+static void race_print_point(const char *name, const line_result_t *result)
+{
+    race_log_printf("RACE_POINT %s reason=%s t=%lu dist=%ld yaw=%ld mask=0x%02X err=%ld\r\n",
+        name,
+        race_reason_name(result->reason),
+        result->elapsed_ms,
+        result->distance_count,
+        result->yaw_cdeg,
+        (result->ir_ok != 0U) ? result->sample.line_mask : 0U,
+        (result->ir_ok != 0U) ? result->sample.error : 0);
+}
+
+/**
+ * @brief Reset the race differential wheel-speed PID gains.
+ */
+static void race_diff_pid_reset(straight_pid_t *pid)
+{
+    straight_pid_reset(pid);
+    pid->kp = RACE_DIFF_KP;
+    pid->ki = 0;
+    pid->kd = RACE_DIFF_KD;
+    pid->i_limit = 0;
+    pid->corr_max = RACE_DIFF_CORR_MAX;
+    pid->integral = 0;
+    pid->last_error = 0;
+}
+
+/**
+ * @brief Configure race straight/arc drive base PWM and target speed bias.
+ */
+static void race_drive_config(straight_drive_config_t *config,
+    int32_t base_pwm,
+    int32_t target_speed_diff)
+{
+    config->base_b_pwm = base_pwm;
+    config->base_a_pwm = base_pwm;
+    config->target_speed_diff = target_speed_diff;
+    config->diff_ff_gain = RACE_DIFF_FF_GAIN;
+    config->distance_corr_divisor = 1;
+    config->distance_corr_max = 0;
+    config->correction_max = RACE_DIFF_CORR_MAX;
+    config->min_pwm = RACE_LINE_MIN_PWM;
+    config->max_pwm = RACE_LINE_MAX_PWM;
+}
+
+/**
+ * @brief Convert heading error and gyro damping into a bounded turn command.
+ */
+static int32_t race_heading_turn_from_error(int32_t heading_error_cdeg,
+    int32_t gyro_z_filtered_mdps,
+    int32_t corr_divisor,
+    int32_t gyro_damp_divisor,
+    int32_t corr_max)
+{
+    int32_t correction;
+
+    if (corr_divisor == 0) {
+        corr_divisor = 1;
+    }
+    if (gyro_damp_divisor == 0) {
+        gyro_damp_divisor = 1;
+    }
+
+    correction = (heading_error_cdeg * TASK1_HEADING_CORR_SIGN) / corr_divisor;
+    correction -= gyro_z_filtered_mdps / gyro_damp_divisor;
+
+    return clamp_i32(-correction, -corr_max, corr_max);
+}
+
+/**
+ * @brief Estimate expected arc yaw progress from distance and turn direction.
+ */
+static int32_t race_arc_expected_yaw_cdeg(int32_t phase_distance_count,
+    int32_t phase_turn_dir)
+{
+    int32_t progress_cdeg;
+
+    if (phase_distance_count <= 0) {
+        return 0;
+    }
+
+    progress_cdeg = (phase_distance_count * 18000L) / TASK3_ARC_LENGTH_COUNT;
+    progress_cdeg = clamp_i32(progress_cdeg, 0, 18000);
+
+    return -phase_turn_dir * progress_cdeg;
+}
+
+/**
+ * @brief Check whether an IR sample contains required bits and no forbidden bits.
+ */
+static uint8_t race_ir_mask_seen(const ir_tracking_sample_t *sample,
+    uint8_t seen_mask,
+    uint8_t forbid_mask)
+{
+    if ((sample == 0) || (sample->line_lost != 0U)) {
+        return 0U;
+    }
+
+    if ((sample->line_mask & seen_mask) == 0U) {
+        return 0U;
+    }
+
+    return ((sample->line_mask & forbid_mask) == 0U) ? 1U : 0U;
+}
+
+/**
+ * @brief Check whether the left edge sensors see line.
+ */
+static uint8_t race_left_edge_seen(const ir_tracking_sample_t *sample,
+    uint8_t require_right_clear)
+{
+    return race_ir_mask_seen(sample,
+        RACE_IR_LEFT_EDGE_MASK,
+        (require_right_clear != 0U) ? RACE_IR_RIGHT_EDGE_MASK : 0U);
+}
+
+/**
+ * @brief Check whether the right edge sensors see line.
+ */
+static uint8_t race_right_edge_seen(const ir_tracking_sample_t *sample,
+    uint8_t require_left_clear)
+{
+    return race_ir_mask_seen(sample,
+        RACE_IR_RIGHT_EDGE_MASK,
+        (require_left_clear != 0U) ? RACE_IR_LEFT_EDGE_MASK : 0U);
+}
+
+/**
+ * @brief Detect when a turn error changes sign across the target heading.
+ */
+static uint8_t race_turn_crossed_target(uint8_t error_valid,
+    int32_t last_error_cdeg,
+    int32_t current_error_cdeg)
+{
+    return ((error_valid != 0U) &&
+        (((last_error_cdeg < 0) && (current_error_cdeg >= 0)) ||
+         ((last_error_cdeg > 0) && (current_error_cdeg <= 0)))) ? 1U : 0U;
+}
+
+/**
+ * @brief Return whether the fast-turn sensor stop logic has a valid line sample.
+ */
+static uint8_t race_sensor_fast_turn_line_seen(uint8_t ir_ok,
+    const ir_tracking_sample_t *sample)
+{
+    return ((ir_ok != 0U) &&
+        (sample->line_lost == 0U) &&
+        (sample->active_count >= RACE_IR_TURN_STOP_MIN_COUNT)) ? 1U : 0U;
+}
+
+/**
+ * @brief Evaluate center/wide/error IR stop criteria for a fast turn.
+ */
+static uint8_t race_sensor_fast_turn_line_ready(
+    const sensor_fast_turn_config_t *config,
+    uint8_t line_seen,
+    const ir_tracking_sample_t *sample,
+    uint8_t *center_ready,
+    uint8_t *wide_ready,
+    uint8_t *err_ready)
+{
+    *center_ready = ((line_seen != 0U) &&
+        ((sample->line_mask & config->stop_mask) != 0U) &&
+        ((sample->line_mask & config->forbid_mask) == 0U)) ? 1U : 0U;
+    *wide_ready = ((line_seen != 0U) && (sample->line_mask == 0xFFU)) ? 1U : 0U;
+    *err_ready = ((line_seen != 0U) &&
+        (abs_i32(sample->error) <= config->stop_error_max)) ? 1U : 0U;
+
+    return (((*center_ready) != 0U) ||
+        ((*wide_ready) != 0U) ||
+        ((*err_ready) != 0U)) ? 1U : 0U;
+}
+
+/**
+ * @brief Evaluate yaw-based stop criteria for a fast turn.
+ */
+static uint8_t race_sensor_fast_turn_yaw_ready(
+    const sensor_fast_turn_config_t *config,
+    uint8_t nav_ok,
+    int32_t yaw_stop_error_cdeg,
+    uint8_t yaw_cross_ready)
+{
+    return ((config->yaw_stop_enable != 0U) &&
+        (nav_ok != 0U) &&
+        ((abs_i32(yaw_stop_error_cdeg) <= RACE_TURN_YAW_STOP_TOL_CDEG) ||
+         (yaw_cross_ready != 0U))) ? 1U : 0U;
+}
+
+/**
+ * @brief Decide whether the fast turn should switch to its slow PWM pair.
+ */
+static uint8_t race_sensor_fast_turn_should_slow(
+    const sensor_fast_turn_config_t *config,
+    uint8_t line_seen,
+    int32_t turn_yaw_progress,
+    int32_t yaw_stop_error_cdeg,
+    uint8_t slow_mode)
+{
+    return (((line_seen != 0U) ||
+        ((RACE_FAST_TURN_GYRO_SLOW_ENABLE != 0) &&
+         ((turn_yaw_progress >= RACE_FAST_TURN_GYRO_SLOW_CDEG) ||
+          ((config->yaw_stop_enable != 0U) &&
+           (abs_i32(yaw_stop_error_cdeg) <= RACE_TURN_YAW_SLOW_ZONE_CDEG))))) &&
+        (slow_mode == 0U)) ? 1U : 0U;
+}
+
+/**
+ * @brief Mutable state for race_sensor_fast_turn().
+ */
+typedef struct {
+    ir_tracking_sample_t sample;
+    jy62_navigation_t nav;
+    uint32_t elapsed_ms;
+    uint32_t report_elapsed_ms;
+    int32_t motor_b_total;
+    int32_t motor_a_total;
+    int32_t turn_yaw_start;
+    int32_t turn_yaw_delta;
+    int32_t turn_yaw_progress;
+    int32_t yaw_stop_error_cdeg;
+    int32_t last_yaw_stop_error_cdeg;
+    int32_t turn_gyro_z_filtered_mdps;
+    uint8_t stop_reason;
+    uint8_t ir_ok;
+    uint8_t nav_ok;
+    uint8_t turn_nav_ok;
+    uint8_t line_stop_ready;
+    uint8_t line_seen;
+    uint8_t slow_mode;
+    uint8_t center_ready;
+    uint8_t wide_ready;
+    uint8_t err_ready;
+    uint8_t yaw_stop_ready;
+    uint8_t yaw_error_valid;
+    uint8_t yaw_cross_ready;
+} race_sensor_fast_turn_state_t;
+
+/**
+ * @brief Convert fast-turn stop reason to log text.
+ */
+static const char *race_sensor_fast_turn_stop_reason_name(uint8_t stop_reason)
+{
+    if (stop_reason == 1U) {
+        return "line";
+    }
+    if (stop_reason == 4U) {
+        return "wide";
+    }
+    if (stop_reason == 6U) {
+        return "yaw";
+    }
+    if (stop_reason == 2U) {
+        return "timeout";
+    }
+    return "uart_stop";
+}
+
+/**
+ * @brief Initialize sensors, encoders, yaw baseline, motor PWM, and logs.
+ */
+static void race_sensor_fast_turn_start(
+    const sensor_fast_turn_config_t *config,
+    race_sensor_fast_turn_state_t *state)
+{
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    state->turn_nav_ok = race_peek_yaw(&state->turn_yaw_start,
+        &state->turn_gyro_z_filtered_mdps);
+    if ((config->yaw_stop_enable != 0U) && (state->turn_nav_ok != 0U)) {
+        state->last_yaw_stop_error_cdeg = normalize_cdeg(
+            state->turn_yaw_start - config->yaw_stop_target_cdeg);
+        state->yaw_error_valid = 1U;
+        if (RACE_FAST_TURN_GYRO_SLOW_ENABLE != 0) {
+            state->slow_mode = 1U;
+        }
+    }
+    TB6612_SetDifferential((state->slow_mode != 0U) ?
+            config->slow_motor_b_pwm : config->motor_b_pwm,
+        (state->slow_mode != 0U) ?
+            config->slow_motor_a_pwm : config->motor_a_pwm);
+    race_ram_log_event(RACE_RAM_EVENT_TURN_START,
+        0U,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(0U),
+        0,
+        g_race_post_point_phase_dist_count,
+        (state->turn_nav_ok != 0U) ? state->turn_yaw_start : 0,
+        0,
+        0,
+        config->yaw_stop_target_cdeg,
+        0,
+        0,
+        (state->turn_nav_ok != 0U) ? state->turn_gyro_z_filtered_mdps : 0,
+        0U,
+        &state->sample,
+        0,
+        0);
+    race_log_printf("%s start: sensor_fast_turn pwm=%d/%d slow=%d/%d stop_mask=0x%02X forbid=0x%02X err_max=%ld yaw_stop=%u target=%ld\r\n",
+        config->tag,
+        config->motor_b_pwm,
+        config->motor_a_pwm,
+        config->slow_motor_b_pwm,
+        config->slow_motor_a_pwm,
+        config->stop_mask,
+        config->forbid_mask,
+        config->stop_error_max,
+        config->yaw_stop_enable,
+        config->yaw_stop_target_cdeg);
+}
+
+/**
+ * @brief Refresh fast-turn IR/yaw/encoder state and slow-mode decision.
+ */
+static void race_sensor_fast_turn_update(
+    const sensor_fast_turn_config_t *config,
+    race_sensor_fast_turn_state_t *state)
+{
+    state->ir_ok = IRTracking_ReadSample(&state->sample);
+    state->nav_ok = JY62_PeekNavigation(&state->nav);
+    state->turn_yaw_delta =
+        ((state->turn_nav_ok != 0U) && (state->nav_ok != 0U)) ?
+        normalize_cdeg(state->nav.yaw_relative_cdeg -
+            state->turn_yaw_start) : 0;
+    state->turn_yaw_progress = abs_i32(state->turn_yaw_delta);
+    state->yaw_stop_error_cdeg =
+        ((config->yaw_stop_enable != 0U) && (state->nav_ok != 0U)) ?
+        normalize_cdeg(state->nav.yaw_relative_cdeg -
+            config->yaw_stop_target_cdeg) : 0;
+    state->yaw_cross_ready = 0U;
+    if ((config->yaw_stop_enable != 0U) && (state->nav_ok != 0U)) {
+        state->yaw_cross_ready = race_turn_crossed_target(
+            state->yaw_error_valid,
+            state->last_yaw_stop_error_cdeg,
+            state->yaw_stop_error_cdeg);
+        state->last_yaw_stop_error_cdeg = state->yaw_stop_error_cdeg;
+        state->yaw_error_valid = 1U;
+    }
+    encoder_get_total_counts(&state->motor_b_total, &state->motor_a_total);
+    state->line_seen = race_sensor_fast_turn_line_seen(state->ir_ok,
+        &state->sample);
+    state->yaw_stop_ready = race_sensor_fast_turn_yaw_ready(config,
+        state->nav_ok,
+        state->yaw_stop_error_cdeg,
+        state->yaw_cross_ready);
+    if (race_sensor_fast_turn_should_slow(config,
+        state->line_seen,
+        state->turn_yaw_progress,
+        state->yaw_stop_error_cdeg,
+        state->slow_mode) != 0U) {
+        state->slow_mode = 1U;
+        TB6612_SetDifferential(config->slow_motor_b_pwm,
+            config->slow_motor_a_pwm);
+    }
+    state->line_stop_ready = race_sensor_fast_turn_line_ready(config,
+        state->line_seen,
+        &state->sample,
+        &state->center_ready,
+        &state->wide_ready,
+        &state->err_ready);
+}
+
+/**
+ * @brief Print one periodic fast-turn diagnostic sample.
+ */
+static void race_sensor_fast_turn_log_sample(
+    const sensor_fast_turn_config_t *config,
+    const race_sensor_fast_turn_state_t *state)
+{
+    race_log_printf("%s t=%lu nav=%u yaw=%ld yprog=%ld target=%ld yerr=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u seen=%u center=%u wide=%u err_ok=%u line_ready=%u yaw_ready=%u\r\n",
+        config->tag,
+        state->elapsed_ms,
+        state->nav_ok,
+        (state->nav_ok != 0U) ? state->nav.yaw_relative_cdeg : 0,
+        state->turn_yaw_progress,
+        config->yaw_stop_target_cdeg,
+        state->yaw_stop_error_cdeg,
+        (state->nav_ok != 0U) ? state->nav.gyro_z_filtered_mdps : 0,
+        state->ir_ok,
+        (state->ir_ok != 0U) ? state->sample.raw : 0xFFU,
+        (state->ir_ok != 0U) ? state->sample.line_mask : 0U,
+        (state->ir_ok != 0U) ? state->sample.active_count : 0U,
+        (state->ir_ok != 0U) ? state->sample.line_lost : 1U,
+        (state->ir_ok != 0U) ? state->sample.error : 0,
+        state->motor_b_total,
+        state->motor_a_total,
+        state->slow_mode,
+        state->line_seen,
+        state->center_ready,
+        state->wide_ready,
+        state->err_ready,
+        state->line_stop_ready,
+        state->yaw_stop_ready);
+}
+
+/**
+ * @brief Brake, capture final sensors, record logs, and close fast-turn state.
+ */
+static void race_sensor_fast_turn_finish(
+    const sensor_fast_turn_config_t *config,
+    race_sensor_fast_turn_state_t *state)
+{
+    TB6612_Brake();
+    state->ir_ok = IRTracking_ReadSample(&state->sample);
+    state->nav_ok = JY62_PeekNavigation(&state->nav);
+    encoder_get_total_counts(&state->motor_b_total, &state->motor_a_total);
+    race_ram_log_event(RACE_RAM_EVENT_TURN_STOP,
+        state->stop_reason,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(state->elapsed_ms),
+        motion_distance_count(state->motor_b_total, state->motor_a_total),
+        g_race_post_point_phase_dist_count,
+        (state->nav_ok != 0U) ? state->nav.yaw_relative_cdeg : 0,
+        state->turn_yaw_progress,
+        state->turn_yaw_delta,
+        config->yaw_stop_target_cdeg,
+        ((config->yaw_stop_enable != 0U) && (state->nav_ok != 0U)) ?
+            normalize_cdeg(state->nav.yaw_relative_cdeg -
+                config->yaw_stop_target_cdeg) : 0,
+        0,
+        (state->nav_ok != 0U) ? state->nav.gyro_z_filtered_mdps : 0,
+        state->ir_ok,
+        &state->sample,
+        state->motor_b_total,
+        state->motor_a_total);
+    race_log_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u yaw_ready=%u\r\n",
+        config->tag,
+        race_sensor_fast_turn_stop_reason_name(state->stop_reason),
+        state->elapsed_ms,
+        state->nav_ok,
+        (state->nav_ok != 0U) ? state->nav.yaw_relative_cdeg : 0,
+        config->yaw_stop_target_cdeg,
+        ((config->yaw_stop_enable != 0U) && (state->nav_ok != 0U)) ?
+            normalize_cdeg(state->nav.yaw_relative_cdeg -
+                config->yaw_stop_target_cdeg) : 0,
+        (state->nav_ok != 0U) ? state->nav.gyro_z_filtered_mdps : 0,
+        state->ir_ok,
+        (state->ir_ok != 0U) ? state->sample.raw : 0xFFU,
+        (state->ir_ok != 0U) ? state->sample.line_mask : 0U,
+        (state->ir_ok != 0U) ? state->sample.active_count : 0U,
+        (state->ir_ok != 0U) ? state->sample.line_lost : 1U,
+        (state->ir_ok != 0U) ? state->sample.error : 0,
+        state->motor_b_total,
+        state->motor_a_total,
+        state->slow_mode,
+        state->yaw_stop_ready);
+}
+
+/**
+ * @brief Execute an IR/yaw-assisted fast turn after a race point.
+ */
+static uint8_t race_sensor_fast_turn(
+    const sensor_fast_turn_config_t *config)
+{
+    race_sensor_fast_turn_state_t state = {0};
+
+    race_sensor_fast_turn_start(config, &state);
+
+    while (state.elapsed_ms < RACE_FAST_TURN_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        state.elapsed_ms += CONTROL_PERIOD_MS;
+        state.report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            state.stop_reason = 3U;
+            break;
+        }
+
+        race_sensor_fast_turn_update(config, &state);
+
+        if (state.line_stop_ready != 0U) {
+            state.stop_reason = 1U;
+            break;
+        }
+        if (state.yaw_stop_ready != 0U) {
+            state.stop_reason = 6U;
+            break;
+        }
+
+        if (state.report_elapsed_ms >= RACE_FAST_TURN_REPORT_PERIOD_MS) {
+            state.report_elapsed_ms = 0;
+            race_sensor_fast_turn_log_sample(config, &state);
+        }
+    }
+
+    if (state.stop_reason == 0U) {
+        state.stop_reason = 2U;
+    }
+
+    race_sensor_fast_turn_finish(config, &state);
+
+    encoder_reset_distance_counts();
+    g_race_post_point_elapsed_ms += state.elapsed_ms;
+    return ((state.stop_reason == 1U) || (state.stop_reason == 4U) ||
+        (state.stop_reason == 6U)) ? 1U : 0U;
+}
+
+/**
+ * @brief Turn in place/near-place until the configured yaw target is reached.
+ */
+static uint8_t race_gyro_turn_to_yaw(
+    const gyro_turn_config_t *config)
+{
+    const char *tag = config->tag;
+    int16_t motor_b_pwm = config->motor_b_pwm;
+    int16_t motor_a_pwm = config->motor_a_pwm;
+    int16_t slow_motor_b_pwm = config->slow_motor_b_pwm;
+    int16_t slow_motor_a_pwm = config->slow_motor_a_pwm;
+    int32_t yaw_stop_target_cdeg = config->yaw_stop_target_cdeg;
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t turn_yaw_start = 0;
+    int32_t turn_yaw_delta = 0;
+    int32_t yaw_stop_error_cdeg = 0;
+    int32_t last_yaw_stop_error_cdeg = 0;
+    int32_t turn_gyro_z_filtered_mdps = 0;
+    uint8_t stop_reason = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+    uint8_t slow_mode = 0U;
+    uint8_t yaw_error_valid = 0U;
+    uint8_t yaw_cross_ready = 0U;
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    nav_ok = race_peek_yaw(&turn_yaw_start, &turn_gyro_z_filtered_mdps);
+    if (nav_ok == 0U) {
+        TB6612_Brake();
+        race_log_printf("%s abort: gyro_turn nav=0 target=%ld\r\n",
+            tag,
+            yaw_stop_target_cdeg);
+        return 0U;
+    }
+
+    last_yaw_stop_error_cdeg = normalize_cdeg(turn_yaw_start -
+        yaw_stop_target_cdeg);
+    yaw_error_valid = 1U;
+    if (abs_i32(last_yaw_stop_error_cdeg) <= RACE_TURN_YAW_SLOW_ZONE_CDEG) {
+        slow_mode = 1U;
+    }
+    TB6612_SetDifferential((slow_mode != 0U) ? slow_motor_b_pwm : motor_b_pwm,
+        (slow_mode != 0U) ? slow_motor_a_pwm : motor_a_pwm);
+    race_ram_log_event(RACE_RAM_EVENT_TURN_START,
+        0U,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(0U),
+        0,
+        g_race_post_point_phase_dist_count,
+        turn_yaw_start,
+        0,
+        0,
+        yaw_stop_target_cdeg,
+        last_yaw_stop_error_cdeg,
+        0,
+        turn_gyro_z_filtered_mdps,
+        0U,
+        &sample,
+        0,
+        0);
+    race_log_printf("%s start: gyro_turn pwm=%d/%d slow=%d/%d yaw0=%ld target=%ld yerr=%ld timeout=%d\r\n",
+        tag,
+        motor_b_pwm,
+        motor_a_pwm,
+        slow_motor_b_pwm,
+        slow_motor_a_pwm,
+        turn_yaw_start,
+        yaw_stop_target_cdeg,
+        last_yaw_stop_error_cdeg,
+        RACE_GYRO_TURN_TIMEOUT_MS);
+
+    while (elapsed_ms < RACE_GYRO_TURN_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        ir_ok = IRTracking_ReadSample(&sample);
+        nav_ok = JY62_PeekNavigation(&nav);
+        if (nav_ok == 0U) {
+            stop_reason = 5U;
+            break;
+        }
+
+        turn_yaw_delta = normalize_cdeg(nav.yaw_relative_cdeg - turn_yaw_start);
+        yaw_stop_error_cdeg = normalize_cdeg(nav.yaw_relative_cdeg -
+            yaw_stop_target_cdeg);
+        yaw_cross_ready = race_turn_crossed_target(yaw_error_valid,
+            last_yaw_stop_error_cdeg,
+            yaw_stop_error_cdeg);
+        last_yaw_stop_error_cdeg = yaw_stop_error_cdeg;
+        yaw_error_valid = 1U;
+
+        if ((slow_mode == 0U) &&
+            (abs_i32(yaw_stop_error_cdeg) <= RACE_TURN_YAW_SLOW_ZONE_CDEG)) {
+            slow_mode = 1U;
+            TB6612_SetDifferential(slow_motor_b_pwm, slow_motor_a_pwm);
+        }
+        if ((abs_i32(yaw_stop_error_cdeg) <= RACE_TURN_YAW_STOP_TOL_CDEG) ||
+            (yaw_cross_ready != 0U)) {
+            stop_reason = 6U;
+            break;
+        }
+
+        if (report_elapsed_ms >= RACE_FAST_TURN_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            encoder_get_total_counts(&motor_b_total, &motor_a_total);
+            race_log_printf("%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld ydelta=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u\r\n",
+                tag,
+                elapsed_ms,
+                nav_ok,
+                nav.yaw_relative_cdeg,
+                yaw_stop_target_cdeg,
+                yaw_stop_error_cdeg,
+                turn_yaw_delta,
+                nav.gyro_z_filtered_mdps,
+                ir_ok,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                (ir_ok != 0U) ? sample.error : 0,
+                motor_b_total,
+                motor_a_total,
+                slow_mode);
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    TB6612_Brake();
+    ir_ok = IRTracking_ReadSample(&sample);
+    nav_ok = JY62_PeekNavigation(&nav);
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    race_ram_log_event(RACE_RAM_EVENT_TURN_STOP,
+        stop_reason,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(elapsed_ms),
+        motion_distance_count(motor_b_total, motor_a_total),
+        g_race_post_point_phase_dist_count,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        (nav_ok != 0U) ? abs_i32(turn_yaw_delta) : 0,
+        (nav_ok != 0U) ? turn_yaw_delta : 0,
+        yaw_stop_target_cdeg,
+        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
+            yaw_stop_target_cdeg) : 0,
+        0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        &sample,
+        motor_b_total,
+        motor_a_total);
+    race_log_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld ydelta=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u\r\n",
+        tag,
+        race_reason_name(stop_reason),
+        elapsed_ms,
+        nav_ok,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        yaw_stop_target_cdeg,
+        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
+            yaw_stop_target_cdeg) : 0,
+        (nav_ok != 0U) ? turn_yaw_delta : 0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0,
+        motor_b_total,
+        motor_a_total,
+        slow_mode);
+
+    encoder_reset_distance_counts();
+    g_race_post_point_elapsed_ms += elapsed_ms;
+    return (stop_reason == 6U) ? 1U : 0U;
+}
+
+/**
+ * @brief Drive forward a fixed encoder distance after a point event.
+ */
+static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
+{
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t distance_count = 0;
+    uint8_t stop_reason = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+
+    if (advance_count <= 0) {
+        race_ram_log_event(RACE_RAM_EVENT_ADVANCE_STOP,
+            1U,
+            g_race_log_lap,
+            g_race_log_phase,
+            0U,
+            race_post_point_event_ms(0U),
+            0,
+            g_race_post_point_phase_dist_count,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0U,
+            &sample,
+            0,
+            0);
+        race_log_printf("%s skip: advance_count=%ld\r\n", tag, advance_count);
+        return 1U;
+    }
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    TB6612_SetDifferential((int16_t)RACE_POINT_ADVANCE_PWM,
+        (int16_t)RACE_POINT_ADVANCE_PWM);
+    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_START,
+        0U,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(0U),
+        0,
+        g_race_post_point_phase_dist_count,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0U,
+        &sample,
+        0,
+        0);
+    race_log_printf("%s start: advance_count=%ld pwm=%d\r\n",
+        tag,
+        advance_count,
+        RACE_POINT_ADVANCE_PWM);
+
+    while (elapsed_ms < RACE_POINT_ADVANCE_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        distance_count = motion_distance_count(motor_b_total, motor_a_total);
+        nav_ok = JY62_PeekNavigation(&nav);
+        ir_ok = IRTracking_ReadSample(&sample);
+
+        if (distance_count >= advance_count) {
+            stop_reason = 1U;
+            break;
+        }
+
+        if (report_elapsed_ms >= RACE_FAST_TURN_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            race_log_printf("%s t=%lu dist=%ld nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+                tag,
+                elapsed_ms,
+                distance_count,
+                nav_ok,
+                (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+                (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+                ir_ok,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                (ir_ok != 0U) ? sample.error : 0,
+                motor_b_total,
+                motor_a_total);
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    distance_count = motion_distance_count(motor_b_total, motor_a_total);
+    nav_ok = JY62_PeekNavigation(&nav);
+    ir_ok = IRTracking_ReadSample(&sample);
+    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_STOP,
+        stop_reason,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(elapsed_ms),
+        distance_count,
+        g_race_post_point_phase_dist_count,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        &sample,
+        motor_b_total,
+        motor_a_total);
+    g_race_post_point_elapsed_ms += elapsed_ms;
+    race_log_printf("%s stop: reason=%s t=%lu dist=%ld nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+        tag,
+        (stop_reason == 1U) ? "distance" : ((stop_reason == 2U) ? "timeout" : "uart_stop"),
+        elapsed_ms,
+        distance_count,
+        nav_ok,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0,
+        motor_b_total,
+        motor_a_total);
+
+    return (stop_reason == 1U) ? 1U : 0U;
+}
+
+#endif /* RACE_PRIMITIVES_H */

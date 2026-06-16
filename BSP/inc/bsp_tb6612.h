@@ -43,17 +43,29 @@
 #define BIN2_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_BIN2_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_BIN2_PIN)))
 #define STBY_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_STBY_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_STBY_PIN)))
 
+/**
+ * @brief Logical TB6612 motor channels.
+ *
+ * In this car, motor A is the right wheel and motor B is the left wheel.
+ */
 typedef enum {
     TB6612_MOTOR_A = 0,
     TB6612_MOTOR_B = 1
 } tb6612_motor_t;
 
+/** Initialize the TB6612 driver into a safe stopped state. */
 void TB6612_Init(void);
+/** Bring TB6612 out of standby. */
 void TB6612_Enable(void);
+/** Disable TB6612 output and clear PWM. */
 void TB6612_Disable(void);
+/** Actively brake both wheels. */
 void TB6612_Brake(void);
+/** Let both wheels coast with motor bridges off. */
 void TB6612_Coast(void);
+/** Set one motor speed; sign controls direction and magnitude controls PWM. */
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed);
+/** Set left/right wheel commands using the project's B-left/A-right wiring. */
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed);
 
 #endif /* 结束 _BSP_TB6612_H 头文件保护 */

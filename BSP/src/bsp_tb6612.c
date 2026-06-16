@@ -1,6 +1,9 @@
 #include "bsp_tb6612.h"
 
 /* 将带符号速度命令转换为限幅后的 PWM 比较值。 */
+/**
+ * @brief Convert a signed speed command to an absolute PWM compare value.
+ */
 static uint32_t TB6612_AbsClamp(int16_t speed)
 {
     int32_t value = speed;
@@ -17,6 +20,9 @@ static uint32_t TB6612_AbsClamp(int16_t speed)
 }
 
 /* A 电机使用 PWM 通道 C0，B 电机使用 PWM 通道 C1。 */
+/**
+ * @brief Write the PWM compare register for one motor channel.
+ */
 static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
 {
     if (pwm > TB6612_PWM_MAX) {
@@ -31,6 +37,9 @@ static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
 }
 
 /* 根据正反转方向设置 TB6612 某一路半桥的方向引脚电平。 */
+/**
+ * @brief Set TB6612 direction pins for one motor.
+ */
 static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 {
     uint8_t in1;
@@ -61,6 +70,9 @@ static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
     }
 }
 
+/**
+ * @brief Initialize the motor driver in a disabled/braked state.
+ */
 void TB6612_Init(void)
 {
     /* 先进入待机状态，再切到明确的刹车状态。 */
@@ -68,11 +80,17 @@ void TB6612_Init(void)
     TB6612_Brake();
 }
 
+/**
+ * @brief Enable TB6612 standby output.
+ */
 void TB6612_Enable(void)
 {
     STBY_OUT(1);
 }
 
+/**
+ * @brief Disable both PWM channels and put TB6612 in standby.
+ */
 void TB6612_Disable(void)
 {
     TB6612_SetPwm(TB6612_MOTOR_A, 0);
@@ -80,6 +98,9 @@ void TB6612_Disable(void)
     STBY_OUT(0);
 }
 
+/**
+ * @brief Actively brake both motor channels.
+ */
 void TB6612_Brake(void)
 {
     TB6612_SetPwm(TB6612_MOTOR_A, TB6612_PWM_MAX);
@@ -92,6 +113,9 @@ void TB6612_Brake(void)
     TB6612_Enable();
 }
 
+/**
+ * @brief Let both motor channels coast.
+ */
 void TB6612_Coast(void)
 {
     TB6612_SetPwm(TB6612_MOTOR_A, 0);
@@ -104,6 +128,9 @@ void TB6612_Coast(void)
     TB6612_Enable();
 }
 
+/**
+ * @brief Set signed speed for one TB6612 motor channel.
+ */
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 {
     uint32_t pwm = TB6612_AbsClamp(speed);
@@ -138,6 +165,9 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
     TB6612_SetPwm(motor, pwm);
 }
 
+/**
+ * @brief Apply signed left/right wheel commands using B-left and A-right.
+ */
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
 {
     /* 当前接线：B 电机是左轮，A 电机是右轮。 */

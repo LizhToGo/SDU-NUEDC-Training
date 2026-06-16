@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+/**
+ * @brief Public task identifiers used by UART, buttons, and the dispatcher.
+ */
 typedef enum {
     TASK_ID_NONE = 0,
     TASK_ID_1 = 1,

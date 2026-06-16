@@ -1,6 +1,14 @@
 #ifndef TASK2_RAM_LOG_H
 #define TASK2_RAM_LOG_H
 
+/**
+ * @file task2_ram_log.h
+ * @brief Task2 RAM-backed event and sample logging.
+ *
+ * Captures compact Task2 AB/BC/CD/DA samples and events, then dumps them over
+ * UART when the task stops. Disabled code paths compile to no-op macros.
+ */
+
 #include <stdint.h>
 
 #include "app_config.h"
@@ -26,6 +34,9 @@ enum {
     TASK2_EVT_COMPLETE = 5
 };
 
+/**
+ * @brief Compact periodic sample record for Task2 RAM logging.
+ */
 typedef struct {
     uint32_t t_ms;
     uint16_t dist_count;
@@ -58,6 +69,9 @@ typedef struct {
     uint8_t flags;
 } task2_ram_sample_t;
 
+/**
+ * @brief Compact event record for Task2 starts, points, stops, and aborts.
+ */
 typedef struct {
     uint32_t t_ms;
     uint16_t dist_count;
@@ -81,6 +95,9 @@ static uint16_t g_task2_ram_sample_overflow;
 static uint8_t g_task2_ram_event_count;
 static uint8_t g_task2_ram_event_overflow;
 
+/**
+ * @brief Saturate signed values before storing them in compact int16 fields.
+ */
 static int16_t task2_sat_i16(int32_t value)
 {
     if (value > 32767) {
@@ -92,6 +109,9 @@ static int16_t task2_sat_i16(int32_t value)
     return (int16_t)value;
 }
 
+/**
+ * @brief Saturate non-negative distances before storing compact uint16 fields.
+ */
 static uint16_t task2_sat_u16(int32_t value)
 {
     if (value <= 0) {
@@ -103,6 +123,9 @@ static uint16_t task2_sat_u16(int32_t value)
     return (uint16_t)value;
 }
 
+/**
+ * @brief Infer AB/BC/CD/DA segment id from a Task2 log tag.
+ */
 static uint8_t task2_ram_segment_from_tag(const char *tag)
 {
     if ((tag != 0) && (tag[6] == 'B') && (tag[7] == 'C')) {
@@ -117,6 +140,9 @@ static uint8_t task2_ram_segment_from_tag(const char *tag)
     return TASK2_SEG_AB;
 }
 
+/**
+ * @brief Return whether RAM logging should be active for a tag.
+ */
 static uint8_t task2_ram_enabled_for_tag(const char *tag)
 {
     return ((tag != 0) &&
@@ -127,6 +153,9 @@ static uint8_t task2_ram_enabled_for_tag(const char *tag)
         (tag[4] == '2')) ? 1U : 0U;
 }
 
+/**
+ * @brief Convert Task2 segment id to dump text.
+ */
 static const char *task2_ram_seg_name(uint8_t seg)
 {
     if (seg == TASK2_SEG_BC) {
@@ -141,6 +170,9 @@ static const char *task2_ram_seg_name(uint8_t seg)
     return "AB";
 }
 
+/**
+ * @brief Convert Task2 event id to dump text.
+ */
 static const char *task2_ram_event_name(uint8_t event)
 {
     if (event == TASK2_EVT_START) {
@@ -161,6 +193,9 @@ static const char *task2_ram_event_name(uint8_t event)
     return "unknown";
 }
 
+/**
+ * @brief Convert Task2 stop reason to dump text.
+ */
 static const char *task2_ram_reason_name(uint8_t reason)
 {
     if (reason == 1U) {
@@ -175,6 +210,9 @@ static const char *task2_ram_reason_name(uint8_t reason)
     return "timeout";
 }
 
+/**
+ * @brief Pack IR/navigation/marker state into one byte for each log row.
+ */
 static uint8_t task2_ram_flags(uint8_t ir_ok,
     const ir_tracking_sample_t *sample,
     uint8_t nav_ok,
@@ -191,6 +229,9 @@ static uint8_t task2_ram_flags(uint8_t ir_ok,
     return flags;
 }
 
+/**
+ * @brief Clear all Task2 RAM log counters before a run.
+ */
 static void task2_ram_log_reset(void)
 {
     g_task2_ram_sample_count = 0U;
@@ -199,6 +240,9 @@ static void task2_ram_log_reset(void)
     g_task2_ram_event_overflow = 0U;
 }
 
+/**
+ * @brief Append one compact Task2 periodic sample.
+ */
 static void task2_ram_log_sample(const char *tag,
     uint32_t elapsed_ms,
     int32_t distance_count,
@@ -264,6 +308,9 @@ static void task2_ram_log_sample(const char *tag,
     log->flags = task2_ram_flags(ir_ok, sample, nav_ok, marker);
 }
 
+/**
+ * @brief Append one compact Task2 event row.
+ */
 static void task2_ram_log_event(const char *tag,
     uint8_t event,
     uint8_t reason,
@@ -301,6 +348,9 @@ static void task2_ram_log_event(const char *tag,
     log->flags = task2_ram_flags(ir_ok, sample, nav_ok, marker);
 }
 
+/**
+ * @brief Optional pacing delay between dumped UART lines.
+ */
 static void task2_ram_dump_line_pause(void)
 {
 #if TASK2_DUMP_LINE_DELAY_MS > 0
@@ -308,6 +358,9 @@ static void task2_ram_dump_line_pause(void)
 #endif
 }
 
+/**
+ * @brief Dump Task2 RAM events and samples over UART.
+ */
 static void task2_ram_log_dump(void)
 {
     uint16_t i;
@@ -326,10 +379,10 @@ static void task2_ram_log_dump(void)
         TASK2_ARC_REPORT_PERIOD_MS,
         TASK1_B_LINE_ARM_COUNT,
         TASK1_FORCE_STOP_COUNT,
-        TASK11_ARC_BASE_PWM,
-        TASK11_DA_ARC_ENTRY_TARGET_DIFF,
-        TASK11_DA_ARC_CRUISE_TARGET_DIFF,
-        TASK11_ARC_POINT_YAW_ARM_CDEG,
+        RACE_ARC_BASE_PWM,
+        RACE_DA_ARC_ENTRY_TARGET_DIFF,
+        RACE_DA_ARC_CRUISE_TARGET_DIFF,
+        RACE_ARC_POINT_YAW_ARM_CDEG,
         TASK2_ARC_ALIGN_TARGET_CDEG,
         (int32_t)TASK2_ARC_FORCE_STOP_COUNT);
     task2_ram_dump_line_pause();

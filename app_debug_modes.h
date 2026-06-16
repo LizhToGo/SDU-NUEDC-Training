@@ -12,6 +12,9 @@
 #include "bsp_jy62.h"
 #include "bsp_tb6612.h"
 
+/**
+ * @brief Lightweight stop detector used by standalone debug streams.
+ */
 static inline uint8_t debug_uart_stop_requested(void)
 {
     static uint8_t seen_zero = 0U;
@@ -34,6 +37,9 @@ static inline uint8_t debug_uart_stop_requested(void)
 }
 
 /* 主电机闭环调试。该函数会一直运行，并按设定周期打印 PID 数据。 */
+/**
+ * @brief Normalize centi-degree heading into the signed +/-180 degree range.
+ */
 static inline int32_t task5_normalize_cdeg(int32_t angle_cdeg)
 {
     while (angle_cdeg > 18000L) {
@@ -45,6 +51,9 @@ static inline int32_t task5_normalize_cdeg(int32_t angle_cdeg)
     return angle_cdeg;
 }
 
+/**
+ * @brief Calculate optional yaw correction for Task5 PID speed testing.
+ */
 static inline int32_t task5_yaw_correction(uint8_t nav_ok,
     const jy62_navigation_t *nav,
     int32_t yaw_start_cdeg)
@@ -76,6 +85,9 @@ static inline int32_t task5_yaw_correction(uint8_t nav_ok,
 #endif
 }
 
+/**
+ * @brief Encoder and averaged wheel-speed data for one Task5 RAM sample.
+ */
 typedef struct {
     int32_t motor_b_delta;
     int32_t motor_a_delta;
@@ -86,6 +98,9 @@ typedef struct {
     int32_t diff_avg;
 } task5_motor_info_t;
 
+/**
+ * @brief JY62 state passed into Task5 logging and yaw correction.
+ */
 typedef struct {
     uint8_t nav_ok;
     const jy62_navigation_t *nav;
@@ -95,6 +110,9 @@ typedef struct {
 } task5_nav_info_t;
 
 #if TASK5_RAM_LOG_ENABLE
+/**
+ * @brief Compact RAM record for one Task5 debug sample.
+ */
 typedef struct {
     uint32_t t_ms;
     int16_t motor_b_delta;
@@ -135,6 +153,9 @@ extern task5_ram_log_t * const g_task5_ram_log;
 extern uint16_t g_task5_ram_log_count;
 extern uint16_t g_task5_ram_log_overflow;
 
+/**
+ * @brief Saturate a 32-bit value for compact int16 RAM logging.
+ */
 static inline int16_t task5_sat_i16(int32_t value)
 {
     if (value > 32767L) {
@@ -146,17 +167,26 @@ static inline int16_t task5_sat_i16(int32_t value)
     return (int16_t)value;
 }
 
+/**
+ * @brief Saturate a 32-bit unsigned value for compact uint16 RAM logging.
+ */
 static inline uint16_t task5_sat_u16(uint32_t value)
 {
     return (value > 65535UL) ? 65535U : (uint16_t)value;
 }
 
+/**
+ * @brief Clear Task5 RAM log counters.
+ */
 static inline void task5_ram_log_reset(void)
 {
     g_task5_ram_log_count = 0U;
     g_task5_ram_log_overflow = 0U;
 }
 
+/**
+ * @brief Optional pacing delay between UART dump lines.
+ */
 static inline void task5_ram_dump_line_pause(void)
 {
 #if TASK5_DUMP_LINE_DELAY_MS > 0
@@ -164,6 +194,9 @@ static inline void task5_ram_dump_line_pause(void)
 #endif
 }
 
+/**
+ * @brief Append one Task5 compact diagnostic record.
+ */
 static inline void task5_ram_log_sample(uint32_t elapsed_ms,
     const task5_motor_info_t *motor,
     const straight_drive_output_t *drive,
@@ -230,6 +263,9 @@ static inline void task5_ram_log_sample(uint32_t elapsed_ms,
     log->nav_update_flags = update_flags;
 }
 
+/**
+ * @brief Dump the buffered Task5 RAM records over UART.
+ */
 static inline void task5_ram_log_dump(const straight_drive_config_t *config,
     int32_t feedforward_correction,
     uint8_t nav_start_ok,
@@ -339,6 +375,9 @@ static inline void task5_ram_log_dump(const straight_drive_config_t *config,
 #define task5_ram_log_dump(config, feedforward_correction, nav_start_ok, yaw_start_cdeg, motor_b_total, motor_a_total, distance_count) ((void)0)
 #endif
 
+/**
+ * @brief UART 05 debug mode: run full PID wheel-speed stream until stop.
+ */
 static inline void run_motor_pid_stream(void)
 {
     straight_pid_t pid;
@@ -496,6 +535,9 @@ static inline void run_motor_pid_stream(void)
 }
 
 /* 07 差速 PD 调参：关闭积分，保留目标差速数学前馈，累计距离差只作观测。 */
+/**
+ * @brief UART 07 debug mode: run PD-only wheel-speed stream until stop.
+ */
 static inline void run_motor_pd_stream(void)
 {
     straight_pid_t pid;
@@ -611,6 +653,9 @@ static inline void run_motor_pd_stream(void)
 }
 
 /* 八路红外循迹调试：根据红外误差直接差速转向。 */
+/**
+ * @brief Convert IR line error into differential PWM turn amount.
+ */
 static inline int32_t line_follow_calculate_turn(int32_t error)
 {
     int32_t turn = (error * LINE_FOLLOW_TURN_SIGN) / LINE_FOLLOW_TURN_DIVISOR;
@@ -618,6 +663,9 @@ static inline int32_t line_follow_calculate_turn(int32_t error)
     return clamp_i32(turn, -LINE_FOLLOW_TURN_LIMIT, LINE_FOLLOW_TURN_LIMIT);
 }
 
+/**
+ * @brief Continuous pure-IR line-follow debug mode.
+ */
 static inline void run_line_follow_test(void)
 {
     ir_tracking_sample_t sample;
@@ -698,6 +746,9 @@ static inline void run_line_follow_test(void)
 }
 
 /* 八路红外模块串口打印测试：只读 I2C 并打印，不驱动电机。 */
+/**
+ * @brief Read-only IR tracking UART print test.
+ */
 static inline void run_ir_tracking_uart_test(void)
 {
     ir_tracking_sample_t sample;

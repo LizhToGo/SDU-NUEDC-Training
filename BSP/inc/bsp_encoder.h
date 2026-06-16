@@ -19,6 +19,9 @@ static volatile uint8_t g_motor_a_encoder_state;
 static volatile uint8_t g_motor_b_encoder_state;
 
 /* 读取编码器 A/B 两相，压缩成 2 bit 状态：A 相为 bit1，B 相为 bit0。 */
+/**
+ * @brief Read the two encoder phase pins and pack them into a 2-bit state.
+ */
 static uint8_t encoder_read_state(uint32_t pin_a, uint32_t pin_b)
 {
     uint32_t pins = DL_GPIO_readPins(ENCODER_PORT, pin_a | pin_b);
@@ -40,6 +43,9 @@ static uint8_t encoder_read_state(uint32_t pin_a, uint32_t pin_b)
  * 下标为 previous_state << 2 | current_state，
  * 所有 2 bit 到 2 bit 的跳变都会映射为 -1、0 或 +1。
  */
+/**
+ * @brief Decode one quadrature transition into -1, 0, or +1 count.
+ */
 static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
 {
     static const int8_t transition_table[16] = {
@@ -53,6 +59,9 @@ static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
 }
 
 /* B 电机编码器发生 GPIO 中断时调用。 */
+/**
+ * @brief Shared GPIO interrupt update for one motor encoder.
+ */
 static void encoder_update_motor(volatile int32_t *count,
     volatile uint8_t *state,
     uint32_t pin_a,
@@ -66,6 +75,9 @@ static void encoder_update_motor(volatile int32_t *count,
     *count += ((int32_t)delta * forward_sign);
 }
 
+/**
+ * @brief Update left/B motor encoder count from GPIO interrupt context.
+ */
 static void encoder_update_motor_b(void)
 {
     encoder_update_motor(&g_motor_b_encoder_count,
@@ -76,6 +88,9 @@ static void encoder_update_motor_b(void)
 }
 
 /* A 电机编码器发生 GPIO 中断时调用。 */
+/**
+ * @brief Update right/A motor encoder count from GPIO interrupt context.
+ */
 static void encoder_update_motor_a(void)
 {
     encoder_update_motor(&g_motor_a_encoder_count,
@@ -85,6 +100,9 @@ static void encoder_update_motor_a(void)
         ENCODER_MOTOR_A_FORWARD_SIGN);
 }
 
+/**
+ * @brief Clear counts and refresh both encoder phase baselines.
+ */
 static void encoder_reset_all_state(void)
 {
     g_motor_a_encoder_count = 0;
@@ -95,6 +113,9 @@ static void encoder_reset_all_state(void)
         ENCODER_MOTOR_A_B_PIN);
 }
 
+/**
+ * @brief Clear pending GPIO interrupt flags for all encoder pins.
+ */
 static void encoder_clear_all_interrupts(void)
 {
     DL_GPIO_clearInterruptStatus(ENCODER_PORT,
@@ -103,6 +124,9 @@ static void encoder_clear_all_interrupts(void)
 }
 
 /* 在开启 GPIO 中断前读取编码器初始状态。 */
+/**
+ * @brief Initialize encoder runtime state before enabling interrupts.
+ */
 static void encoder_init_runtime(void)
 {
     encoder_reset_all_state();
@@ -110,6 +134,9 @@ static void encoder_init_runtime(void)
 }
 
 /* 编码器初始状态有效后，开启 GPIOA 分组中断。 */
+/**
+ * @brief Enable the shared encoder GPIO interrupt group.
+ */
 static void encoder_enable_interrupts(void)
 {
     encoder_clear_all_interrupts();
@@ -120,6 +147,9 @@ static void encoder_enable_interrupts(void)
  * 返回距离上一次调用以来的编码器计数增量。
  * 读取 volatile 计数器时会短暂关中断，避免读到一半被中断打断。
  */
+/**
+ * @brief Atomically snapshot volatile encoder totals.
+ */
 static void encoder_snapshot_counts(int32_t *motor_b_count, int32_t *motor_a_count)
 {
     __disable_irq();
@@ -128,6 +158,9 @@ static void encoder_snapshot_counts(int32_t *motor_b_count, int32_t *motor_a_cou
     __enable_irq();
 }
 
+/**
+ * @brief Return encoder deltas since the last call.
+ */
 static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
     static int32_t last_motor_b_count;
@@ -143,11 +176,17 @@ static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_de
     last_motor_a_count = motor_a_count;
 }
 
+/**
+ * @brief Return current cumulative encoder totals.
+ */
 static void encoder_get_total_counts(int32_t *motor_b_total, int32_t *motor_a_total)
 {
     encoder_snapshot_counts(motor_b_total, motor_a_total);
 }
 
+/**
+ * @brief Reset distance totals and clear the delta baseline.
+ */
 static void encoder_reset_distance_counts(void)
 {
     int32_t dummy_b;
@@ -161,6 +200,9 @@ static void encoder_reset_distance_counts(void)
 }
 
 /* 在固定时间窗口内测量编码器变化量，用于可选的编码器自检。 */
+/**
+ * @brief Measure encoder movement over a fixed blocking time window.
+ */
 static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
     uint32_t elapsed_ms = 0;
@@ -179,6 +221,9 @@ static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32
            ((*motor_a_delta < 0) ? -*motor_a_delta : *motor_a_delta);
 }
 
+/**
+ * @brief Spin one motor command and report which encoder moved.
+ */
 static uint8_t encoder_test_single_motor(const char *label,
     int16_t motor_b_pwm,
     int16_t motor_a_pwm,
@@ -207,6 +252,9 @@ static uint8_t encoder_test_single_motor(const char *label,
 /*
  * 可选接线自检。
  * 每次只转一个电机，检查对应编码器是否有计数。
+ */
+/**
+ * @brief Optional wiring self-test for both motor/encoder pairs.
  */
 static uint8_t encoder_motor_self_test(void)
 {
