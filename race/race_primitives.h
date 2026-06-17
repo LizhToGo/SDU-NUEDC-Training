@@ -893,4 +893,85 @@ static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
     return (stop_reason == 1U) ? 1U : 0U;
 }
 
+/**
+ * @brief Drive forward after a forced straight turn until any line is found.
+ */
+static uint8_t race_drive_forward_until_line(const char *tag, int32_t max_count)
+{
+    ir_tracking_sample_t sample = {0};
+    uint32_t elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t distance_count = 0;
+    uint8_t ir_ok = 0U;
+    uint8_t stop_reason = 0U;
+
+    if (max_count <= 0) {
+        return 0U;
+    }
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    TB6612_SetDifferential((int16_t)RACE_FORCE_FIND_LINE_PWM,
+        (int16_t)RACE_FORCE_FIND_LINE_PWM);
+    race_log_printf("%s start: find_line max=%ld pwm=%d\r\n",
+        tag,
+        max_count,
+        RACE_FORCE_FIND_LINE_PWM);
+
+    while (elapsed_ms < RACE_FORCE_FIND_LINE_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        distance_count = motion_distance_count(motor_b_total, motor_a_total);
+        ir_ok = IRTracking_ReadSample(&sample);
+        if ((ir_ok != 0U) &&
+            (sample.line_lost == 0U) &&
+            (sample.active_count >= RACE_IR_TURN_STOP_MIN_COUNT)) {
+            stop_reason = 1U;
+            break;
+        }
+        if (distance_count >= max_count) {
+            stop_reason = 2U;
+            break;
+        }
+    }
+
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    distance_count = motion_distance_count(motor_b_total, motor_a_total);
+    ir_ok = IRTracking_ReadSample(&sample);
+#if RACE_DISTANCE_LOG_ENABLE
+    lc_printf("%s result=%s dist=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld\r\n",
+        tag,
+        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "distance" :
+            ((stop_reason == 3U) ? "uart_stop" : "timeout")),
+        distance_count,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0);
+#endif
+    race_log_printf("%s stop: reason=%s t=%lu dist=%ld ir=%u mask=0x%02X cnt=%u lost=%u err=%ld\r\n",
+        tag,
+        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "distance" :
+            ((stop_reason == 3U) ? "uart_stop" : "timeout")),
+        elapsed_ms,
+        distance_count,
+        ir_ok,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0);
+
+    return (stop_reason == 1U) ? 1U : 0U;
+}
+
 #endif /* RACE_PRIMITIVES_H */

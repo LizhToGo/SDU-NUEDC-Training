@@ -651,13 +651,18 @@ static void race_ram_log_event(uint8_t event,
 /**
  * @brief Return expected yaw target at the start of a race phase.
  */
-static int32_t race_phase_start_expected_yaw_cdeg(uint8_t phase)
+static int32_t race_phase_start_expected_yaw_cdeg(uint8_t phase,
+    uint8_t target_laps)
 {
+    uint8_t task4_mode = (target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
+
     if (phase == 0U) {
-        return RACE_AC_HEADING_TARGET_CDEG;
+        return task4_mode ? RACE_TASK4_AC_HEADING_TARGET_CDEG :
+            RACE_AC_HEADING_TARGET_CDEG;
     }
     if (phase == 2U) {
-        return RACE_BD_HEADING_TARGET_CDEG;
+        return task4_mode ? RACE_TASK4_BD_HEADING_TARGET_CDEG :
+            RACE_BD_HEADING_TARGET_CDEG;
     }
     return 0;
 }
@@ -665,7 +670,8 @@ static int32_t race_phase_start_expected_yaw_cdeg(uint8_t phase)
 /**
  * @brief Record the opening snapshot for one race segment.
  */
-static void race_log_segment_start_snapshot(uint8_t lap,
+static void race_log_segment_start_snapshot(uint8_t target_laps,
+    uint8_t lap,
     uint8_t phase,
     uint32_t elapsed_ms,
     uint8_t nav_ok,
@@ -675,7 +681,8 @@ static void race_log_segment_start_snapshot(uint8_t lap,
     ir_tracking_sample_t sample = {0};
     int32_t motor_b_total = 0;
     int32_t motor_a_total = 0;
-    int32_t expected_yaw_cdeg = race_phase_start_expected_yaw_cdeg(phase);
+    int32_t expected_yaw_cdeg =
+        race_phase_start_expected_yaw_cdeg(phase, target_laps);
     int32_t heading_error_cdeg = 0;
     uint8_t ir_ok;
     uint8_t extra_flags = 0U;
@@ -734,7 +741,7 @@ static void race_ram_dump_section_pause(void)
 /**
  * @brief Dump all race RAM logs over UART in sections.
  */
-static void race_ram_log_dump(void)
+static void race_ram_log_dump(uint8_t target_laps)
 {
     uint16_t i;
     uint32_t seq = 0U;
@@ -744,6 +751,11 @@ static void race_ram_log_dump(void)
     uint16_t window_overflow = g_race_window_log_overflow;
     uint16_t event_overflow = g_race_event_log_overflow;
     uint16_t summary_overflow = g_race_summary_log_overflow;
+    uint8_t task4_mode = (target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
+    int32_t ac_target_cdeg = task4_mode ?
+        RACE_TASK4_AC_HEADING_TARGET_CDEG : RACE_AC_HEADING_TARGET_CDEG;
+    int32_t bd_target_cdeg = task4_mode ?
+        RACE_TASK4_BD_HEADING_TARGET_CDEG : RACE_BD_HEADING_TARGET_CDEG;
 
     if (window_count > RACE_RAM_WINDOW_CAPACITY) {
         window_overflow++;
@@ -771,7 +783,7 @@ static void race_ram_log_dump(void)
         summary_overflow,
         RACE_RAM_LOG_MAX_LAPS);
     race_ram_dump_line_pause();
-    lc_printf("RACE_CFG seq=%lu line_base=%d arc_base=%d gyro_st=%u ir_assist=%u h_div=%d h_max=%d h_gd=%d ac_tgt=%d bd_tgt=%d gyro_to=%d arc_yaw=%u arc_div=%d arc_max=%d arc_gd=%d arc_yaw_arm=%d win_pre=%d win_start=%d turn_slow=%u turn_slow_yaw=%d yaw_stop=%u yaw_tol=%d yaw_gz=%d b_exit=%d a_exit=%d ff_gain=%d\r\n",
+    lc_printf("RACE_CFG seq=%lu line_base=%d arc_base=%d gyro_st=%u ir_assist=%u h_div=%d h_max=%d h_gd=%d ac_tgt=%ld bd_tgt=%ld gyro_to=%d arc_yaw=%u arc_div=%d arc_max=%d arc_gd=%d arc_yaw_arm=%d win_pre=%d win_start=%d turn_slow=%u turn_slow_yaw=%d yaw_stop=%u yaw_tol=%d yaw_gz=%d b_exit=%ld a_exit=%ld ff_gain=%d\r\n",
         (unsigned long)seq++,
         RACE_LINE_BASE_PWM,
         RACE_ARC_BASE_PWM,
@@ -780,8 +792,8 @@ static void race_ram_log_dump(void)
         RACE_STRAIGHT_HEADING_CORR_DIVISOR,
         RACE_STRAIGHT_HEADING_CORR_MAX,
         RACE_STRAIGHT_GYRO_DAMP_DIVISOR,
-        RACE_AC_HEADING_TARGET_CDEG,
-        RACE_BD_HEADING_TARGET_CDEG,
+        (long)ac_target_cdeg,
+        (long)bd_target_cdeg,
         RACE_GYRO_TURN_TIMEOUT_MS,
         RACE_ARC_YAW_NAV_ENABLE,
         RACE_ARC_YAW_CORR_DIVISOR,
@@ -795,8 +807,8 @@ static void race_ram_log_dump(void)
         RACE_EXIT_TURN_YAW_STOP_ENABLE,
         RACE_TURN_YAW_STOP_TOL_CDEG,
         RACE_TURN_YAW_STOP_GZLP_TOL_MDPS,
-        RACE_BD_HEADING_TARGET_CDEG,
-        RACE_AC_HEADING_TARGET_CDEG,
+        (long)bd_target_cdeg,
+        (long)ac_target_cdeg,
         RACE_DIFF_FF_GAIN);
     race_ram_dump_line_pause();
 
@@ -941,8 +953,8 @@ static void race_ram_log_dump(void)
 #define race_ram_window_should_log(lap, phase_distance_count, point_arm_count) (0U)
 #define race_ram_log_window_sample(lap, phase, ir_ok, sample, edge_seen, extra_flags, elapsed_ms, phase_distance_count, yaw_cdeg, yaw_raw_cdeg, phase_yaw_cdeg, yaw_progress_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, control_turn, gyro_z_mdps, gyro_z_filtered_mdps, roll_cdeg, pitch_cdeg, nav_frame_delta, nav_update_flags) ((void)0)
 #define race_ram_log_event(event, reason, lap, phase, extra_flags, elapsed_ms, distance_count, phase_distance_count, yaw_cdeg, yaw_progress_cdeg, yaw_delta_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, gyro_z_filtered_mdps, ir_ok, sample, motor_b_total, motor_a_total) ((void)0)
-#define race_log_segment_start_snapshot(lap, phase, elapsed_ms, nav_ok, yaw_cdeg, gyro_z_filtered_mdps) ((void)0)
-#define race_ram_log_dump() ((void)0)
+#define race_log_segment_start_snapshot(target_laps, lap, phase, elapsed_ms, nav_ok, yaw_cdeg, gyro_z_filtered_mdps) ((void)0)
+#define race_ram_log_dump(target_laps) ((void)0)
 #endif
 
 #if TASK5_RAM_LOG_ENABLE && !RACE_RAM_LOG_ENABLE

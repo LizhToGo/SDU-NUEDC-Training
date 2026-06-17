@@ -18,7 +18,6 @@
 #include "board.h"
 #include "bsp_ir_tracking.h"
 
-#if TASK2_RAM_LOG_ENABLE
 enum {
     TASK2_SEG_AB = 0,
     TASK2_SEG_BC = 1,
@@ -34,6 +33,7 @@ enum {
     TASK2_EVT_COMPLETE = 5
 };
 
+#if TASK2_RAM_LOG_ENABLE
 /**
  * @brief Compact periodic sample record for Task2 RAM logging.
  */

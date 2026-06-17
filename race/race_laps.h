@@ -62,6 +62,7 @@ typedef struct {
     straight_drive_config_t drive_config;
     straight_drive_output_t drive;
     uint32_t elapsed_ms;
+    uint32_t phase_start_ms;
     uint32_t report_elapsed_ms;
     uint32_t nav_frame_delta;
     int32_t motor_b_delta;
@@ -251,6 +252,25 @@ static void run_race_laps(uint8_t target_laps)
                 RACE_RAM_EVENT_POINT);
 
             if (race_execute_point_action(&ctx) == 0U) {
+                ctx.stop_reason = 2U;
+                break;
+            }
+
+            race_advance_segment(&ctx, 1U);
+            if (ctx.stop_reason != 0U) {
+                break;
+            }
+            continue;
+        }
+
+        if (race_check_straight_force_turn(&ctx, &phase_config) != 0U) {
+            race_capture_result(&ctx, 2U);
+            race_log_point_state(&ctx,
+                &phase_config,
+                ctx.result.reason,
+                RACE_RAM_EVENT_FORCE);
+
+            if (race_execute_straight_force_turn_action(&ctx) == 0U) {
                 ctx.stop_reason = 2U;
                 break;
             }
