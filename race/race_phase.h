@@ -157,11 +157,43 @@ static void race_update_loop_state(race_context_t *ctx,
 }
 
 /**
+ * @brief Quickly ramp a Task4 high-speed base down to the stable Task3 base.
+ */
+static int32_t race_task4_decel_base_pwm(int32_t fast_base_pwm,
+    int32_t stable_base_pwm,
+    int32_t phase_distance_count,
+    int32_t decel_start_count,
+    int32_t decel_ramp_count)
+{
+    int32_t decel_distance;
+    int32_t pwm_drop;
+
+    if ((fast_base_pwm <= stable_base_pwm) ||
+        (phase_distance_count <= decel_start_count)) {
+        return fast_base_pwm;
+    }
+    if (decel_ramp_count <= 0) {
+        return stable_base_pwm;
+    }
+
+    decel_distance = phase_distance_count - decel_start_count;
+    if (decel_distance >= decel_ramp_count) {
+        return stable_base_pwm;
+    }
+
+    pwm_drop = ((fast_base_pwm - stable_base_pwm) * decel_distance) /
+        decel_ramp_count;
+    return fast_base_pwm - pwm_drop;
+}
+
+/**
  * @brief Calculate line turn, yaw turn, wheel-speed PID, and final PWM values.
  */
 static void race_compute_loop_control(race_context_t *ctx,
     const race_phase_config_t *config)
 {
+    uint8_t task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
+
     ctx->raw_error = 0;
     ctx->derivative = 0;
     ctx->line_turn = 0;
@@ -172,8 +204,15 @@ static void race_compute_loop_control(race_context_t *ctx,
     ctx->arc_actual_yaw_cdeg = 0;
 
     if (config->arc_mode != 0U) {
-        ctx->base_pwm = (ctx->target_laps == TASK4_LAP_COUNT) ?
-            RACE_TASK4_ARC_BASE_PWM : RACE_ARC_BASE_PWM;
+        ctx->base_pwm = task4_mode ? RACE_TASK4_ARC_BASE_PWM :
+            RACE_ARC_BASE_PWM;
+        if (task4_mode != 0U) {
+            ctx->base_pwm = race_task4_decel_base_pwm(ctx->base_pwm,
+                RACE_ARC_BASE_PWM,
+                ctx->phase_distance_count,
+                RACE_TASK4_EXIT_DECEL_START_COUNT,
+                RACE_TASK4_EXIT_DECEL_RAMP_COUNT);
+        }
         if (ctx->phase == 1U) {
             ctx->target_speed_diff =
                 (ctx->phase_distance_count < TASK3_ARC_ENTRY_COUNT) ?
@@ -186,8 +225,13 @@ static void race_compute_loop_control(race_context_t *ctx,
                     RACE_DA_ARC_CRUISE_TARGET_DIFF;
         }
     } else {
-        if (ctx->target_laps == TASK4_LAP_COUNT) {
+        if (task4_mode != 0U) {
             ctx->base_pwm = RACE_TASK4_STRAIGHT_BASE_PWM;
+            ctx->base_pwm = race_task4_decel_base_pwm(ctx->base_pwm,
+                RACE_STRAIGHT_BASE_PWM,
+                ctx->phase_distance_count,
+                RACE_TASK4_ENTRY_DECEL_START_COUNT,
+                RACE_TASK4_ENTRY_DECEL_RAMP_COUNT);
             ctx->target_speed_diff = RACE_TASK4_STRAIGHT_TARGET_DIFF;
         } else {
             ctx->base_pwm = RACE_STRAIGHT_BASE_PWM;
