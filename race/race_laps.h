@@ -224,20 +224,23 @@ static void run_race_laps(uint8_t target_laps)
 {
     race_context_t ctx = {0};
     race_phase_config_t phase_config;
+    uint32_t control_period_ms;
 
     race_init_lap_context(&ctx, target_laps);
     if (ctx.stop_reason != 0U) {
         race_finish_lap_context(&ctx);
         return;
     }
+    control_period_ms = (ctx.target_laps == TASK4_LAP_COUNT) ?
+        RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS;
 
     while ((ctx.elapsed_ms < RACE_TOTAL_MAX_RUN_MS) &&
         (ctx.lap_count < ctx.target_laps)) {
         race_configure_phase(&ctx, &phase_config);
 
-        delay_ms_with_st011(CONTROL_PERIOD_MS);
-        ctx.elapsed_ms += CONTROL_PERIOD_MS;
-        ctx.report_elapsed_ms += CONTROL_PERIOD_MS;
+        delay_ms_with_st011(control_period_ms);
+        ctx.elapsed_ms += control_period_ms;
+        ctx.report_elapsed_ms += control_period_ms;
 
         if (task_uart_stop_requested() != 0U) {
             ctx.stop_reason = 3U;

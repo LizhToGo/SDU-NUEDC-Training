@@ -646,8 +646,12 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
             .slow_motor_a_pwm = RACE_EXIT_LEFT_TURN_SLOW_A_PWM,
             .yaw_stop_target_cdeg = target_cdeg
         };
-        turn_success = race_advance_after_point("RACE_B_ADVANCE",
-            RACE_ARC_POINT_ADVANCE_COUNT);
+        turn_success = task4_mode ?
+            race_advance_after_point_with_heading("RACE_B_ADVANCE",
+                RACE_ARC_POINT_ADVANCE_COUNT,
+                RACE_TASK4_B_ADVANCE_HEADING_TARGET_CDEG) :
+            race_advance_after_point("RACE_B_ADVANCE",
+                RACE_ARC_POINT_ADVANCE_COUNT);
         if (turn_success != 0U) {
             turn_success = race_gyro_turn_to_yaw(&turn_config);
         }
@@ -685,8 +689,9 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
             .slow_motor_a_pwm = RACE_EXIT_RIGHT_TURN_SLOW_A_PWM,
             .yaw_stop_target_cdeg = target_cdeg
         };
-        turn_success = race_advance_after_point("RACE_A_ADVANCE",
-            RACE_ARC_POINT_ADVANCE_COUNT);
+        turn_success = race_advance_after_point_with_heading("RACE_A_ADVANCE",
+            RACE_ARC_POINT_ADVANCE_COUNT,
+            RACE_TASK4_A_ADVANCE_HEADING_TARGET_CDEG);
         if (turn_success != 0U) {
             turn_success = race_gyro_turn_to_yaw(&turn_config);
         }

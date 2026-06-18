@@ -305,6 +305,9 @@ static int32_t race_heading_turn_from_error(int32_t heading_error_cdeg,
 static int32_t race_arc_expected_yaw_cdeg(int32_t phase_distance_count,
     int32_t phase_turn_dir);
 static uint8_t race_advance_after_point(const char *tag, int32_t advance_count);
+static uint8_t race_advance_after_point_with_heading(const char *tag,
+    int32_t advance_count,
+    int32_t target_cdeg);
 static uint8_t race_peek_yaw(int32_t *yaw_cdeg, int32_t *gyro_z_filtered_mdps);
 static uint8_t race_gyro_turn_to_yaw(
     const gyro_turn_config_t *config);

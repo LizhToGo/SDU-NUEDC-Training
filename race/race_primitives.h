@@ -894,6 +894,186 @@ static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
 }
 
 /**
+ * @brief Task4 arc-exit advance with a small gyro target-heading correction.
+ */
+static uint8_t race_advance_after_point_with_heading(const char *tag,
+    int32_t advance_count,
+    int32_t target_cdeg)
+{
+    ir_tracking_sample_t sample = {0};
+    jy62_navigation_t nav = {0};
+    uint32_t elapsed_ms = 0;
+    uint32_t report_elapsed_ms = 0;
+    int32_t motor_b_total = 0;
+    int32_t motor_a_total = 0;
+    int32_t distance_count = 0;
+    int32_t heading_error_cdeg = 0;
+    int32_t correction = 0;
+    int32_t motor_b_pwm = RACE_POINT_ADVANCE_PWM;
+    int32_t motor_a_pwm = RACE_POINT_ADVANCE_PWM;
+    uint8_t stop_reason = 0U;
+    uint8_t ir_ok = 0U;
+    uint8_t nav_ok = 0U;
+    uint8_t target_valid = 0U;
+
+    if ((RACE_TASK4_ADVANCE_GYRO_ENABLE == 0) || (advance_count <= 0)) {
+        return race_advance_after_point(tag, advance_count);
+    }
+
+    encoder_reset_distance_counts();
+    encoder_enable_interrupts();
+    target_cdeg = normalize_cdeg(target_cdeg);
+    nav_ok = JY62_PeekNavigation(&nav);
+    if (nav_ok != 0U) {
+        target_valid = 1U;
+    }
+    TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
+    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_START,
+        0U,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(0U),
+        0,
+        g_race_post_point_phase_dist_count,
+        0,
+        0,
+        0,
+        target_cdeg,
+        0,
+        0,
+        0,
+        0U,
+        &sample,
+        0,
+        0);
+    race_log_printf("%s start: advance_count=%ld pwm=%d hold=%u target=%ld gyro=1\r\n",
+        tag,
+        advance_count,
+        RACE_POINT_ADVANCE_PWM,
+        target_valid,
+        (long)target_cdeg);
+
+    while (elapsed_ms < RACE_POINT_ADVANCE_TIMEOUT_MS) {
+        delay_ms_with_st011(CONTROL_PERIOD_MS);
+        elapsed_ms += CONTROL_PERIOD_MS;
+        report_elapsed_ms += CONTROL_PERIOD_MS;
+
+        if (task_uart_stop_requested() != 0U) {
+            stop_reason = 3U;
+            break;
+        }
+
+        encoder_get_total_counts(&motor_b_total, &motor_a_total);
+        distance_count = motion_distance_count(motor_b_total, motor_a_total);
+        nav_ok = JY62_PeekNavigation(&nav);
+        ir_ok = IRTracking_ReadSample(&sample);
+
+        if ((nav_ok != 0U) && (target_valid != 0U)) {
+            heading_error_cdeg = normalize_cdeg(nav.yaw_relative_cdeg -
+                target_cdeg);
+            correction = race_heading_turn_from_error(heading_error_cdeg,
+                nav.gyro_z_filtered_mdps,
+                RACE_TASK4_ADVANCE_HEADING_CORR_DIVISOR,
+                RACE_TASK4_ADVANCE_GYRO_DAMP_DIVISOR,
+                RACE_TASK4_ADVANCE_HEADING_CORR_MAX);
+        } else {
+            heading_error_cdeg = 0;
+            correction = 0;
+        }
+
+        motor_b_pwm = clamp_i32(RACE_POINT_ADVANCE_PWM + correction,
+            RACE_LINE_MIN_PWM,
+            RACE_LINE_MAX_PWM);
+        motor_a_pwm = clamp_i32(RACE_POINT_ADVANCE_PWM - correction,
+            RACE_LINE_MIN_PWM,
+            RACE_LINE_MAX_PWM);
+        TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
+
+        if (distance_count >= advance_count) {
+            stop_reason = 1U;
+            break;
+        }
+
+        if (report_elapsed_ms >= RACE_FAST_TURN_REPORT_PERIOD_MS) {
+            report_elapsed_ms = 0;
+            race_log_printf("%s t=%lu dist=%ld nav=%u yaw=%ld target=%ld herr=%ld corr=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld pwm=%ld/%ld\r\n",
+                tag,
+                elapsed_ms,
+                distance_count,
+                nav_ok,
+                (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+                (long)target_cdeg,
+                heading_error_cdeg,
+                correction,
+                (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+                ir_ok,
+                (ir_ok != 0U) ? sample.raw : 0xFFU,
+                (ir_ok != 0U) ? sample.line_mask : 0U,
+                (ir_ok != 0U) ? sample.active_count : 0U,
+                (ir_ok != 0U) ? sample.line_lost : 1U,
+                (ir_ok != 0U) ? sample.error : 0,
+                motor_b_total,
+                motor_a_total,
+                motor_b_pwm,
+                motor_a_pwm);
+        }
+    }
+
+    if (stop_reason == 0U) {
+        stop_reason = 2U;
+    }
+
+    encoder_get_total_counts(&motor_b_total, &motor_a_total);
+    distance_count = motion_distance_count(motor_b_total, motor_a_total);
+    nav_ok = JY62_PeekNavigation(&nav);
+    ir_ok = IRTracking_ReadSample(&sample);
+    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_STOP,
+        stop_reason,
+        g_race_log_lap,
+        g_race_log_phase,
+        0U,
+        race_post_point_event_ms(elapsed_ms),
+        distance_count,
+        g_race_post_point_phase_dist_count,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        0,
+        0,
+        target_cdeg,
+        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
+            target_cdeg) : 0,
+        correction,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        &sample,
+        motor_b_total,
+        motor_a_total);
+    g_race_post_point_elapsed_ms += elapsed_ms;
+    race_log_printf("%s stop: reason=%s t=%lu dist=%ld nav=%u yaw=%ld target=%ld herr=%ld corr=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
+        tag,
+        race_reason_name(stop_reason),
+        elapsed_ms,
+        distance_count,
+        nav_ok,
+        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
+        (long)target_cdeg,
+        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
+            target_cdeg) : 0,
+        correction,
+        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
+        ir_ok,
+        (ir_ok != 0U) ? sample.raw : 0xFFU,
+        (ir_ok != 0U) ? sample.line_mask : 0U,
+        (ir_ok != 0U) ? sample.active_count : 0U,
+        (ir_ok != 0U) ? sample.line_lost : 1U,
+        (ir_ok != 0U) ? sample.error : 0,
+        motor_b_total,
+        motor_a_total);
+
+    return (stop_reason == 1U) ? 1U : 0U;
+}
+
+/**
  * @brief Drive forward after a forced straight turn until any line is found.
  */
 static uint8_t race_drive_forward_until_line(const char *tag, int32_t max_count)
