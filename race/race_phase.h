@@ -457,11 +457,6 @@ static void race_log_point_state(const race_context_t *ctx,
     uint8_t reason,
     uint8_t event_type)
 {
-    const char *event_name = (event_type == RACE_RAM_EVENT_POINT) ?
-        "point" : "force";
-    const char *name = (event_type == RACE_RAM_EVENT_POINT) ?
-        config->point_name : config->force_name;
-
     race_ram_log_segment_finish(reason,
         ctx->elapsed_ms,
         ctx->phase_distance_count,
@@ -490,59 +485,13 @@ static void race_log_point_state(const race_context_t *ctx,
         &ctx->sample,
         ctx->motor_b_total,
         ctx->motor_a_total);
-    race_event_printf("RACE_EVT_RT lap=%u seg=%s event=%s t=%lu dist=%ld mask=0x%02X\r\n",
-        ctx->lap_count,
-        config->phase_name,
-        event_name,
-        ctx->elapsed_ms,
-        ctx->phase_distance_count,
-        (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U);
-    race_print_point(name, &ctx->result);
     st011_start_pulse(RACE_POINT_ALARM_MS);
-#if RACE_DISTANCE_LOG_ENABLE
-    lc_printf("RACE_LEN lap=%u seg=%s ev=%s reason=%u dist=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld\r\n",
-        ctx->lap_count,
-        config->phase_name,
-        event_name,
-        reason,
-        ctx->phase_distance_count,
-        ctx->ir_ok,
-        (ctx->ir_ok != 0U) ? ctx->sample.raw : 0xFFU,
-        (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U,
-        (ctx->ir_ok != 0U) ? ctx->sample.active_count : 0U,
-        (ctx->ir_ok != 0U) ? ctx->sample.line_lost : 1U,
-        (ctx->ir_ok != 0U) ? ctx->sample.error : 0);
-#endif
-    race_log_printf("RACE_POINT_STATE seg=%s edge=%u line_seen_n=%u pflags=0x%02X nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld raw=0x%02X mask=0x%02X cnt=%u\r\n",
-        config->phase_name,
-        ctx->edge_point_seen,
-        ctx->straight_line_seen_count,
-        ctx->point_log_flags,
-        ctx->nav_ok,
-        ctx->nav_frame_delta,
-        ctx->nav_update_flags,
-        ctx->yaw_cdeg,
-        ctx->yaw_raw_cdeg,
-        ctx->phase_yaw_cdeg,
-        ctx->yaw_progress_cdeg,
-        ctx->expected_yaw_cdeg,
-        ctx->heading_error_cdeg,
-        ctx->gyro_z_mdps,
-        ctx->gyro_z_filtered_mdps,
-        ctx->roll_cdeg,
-        ctx->pitch_cdeg,
-        ctx->line_turn,
-        ctx->nav_turn,
-        ctx->control_turn,
-        ctx->target_speed_diff,
-        ctx->drive.feedforward_correction,
-        (ctx->ir_ok != 0U) ? ctx->sample.raw : 0xFFU,
-        (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U,
-        (ctx->ir_ok != 0U) ? ctx->sample.active_count : 0U);
 
     if (event_type == RACE_RAM_EVENT_POINT) {
         race_post_point_context_begin(ctx->elapsed_ms, ctx->phase_distance_count);
     }
+
+    (void)config;
 }
 
 /**
@@ -557,50 +506,6 @@ static void race_capture_result(race_context_t *ctx, uint8_t reason)
     ctx->result.yaw_progress_cdeg = ctx->yaw_progress_cdeg;
     ctx->result.ir_ok = ctx->ir_ok;
     ctx->result.sample = ctx->sample;
-}
-
-/**
- * @brief Print the actual yaw after an A/B gyro exit turn.
- */
-static void race_log_exit_turn_result(const race_context_t *ctx,
-    const char *point_name,
-    const char *next_segment,
-    int32_t target_cdeg,
-    uint8_t turn_success)
-{
-#if RACE_EXIT_DIAG_LOG_ENABLE
-    int32_t yaw_cdeg = 0;
-    int32_t gyro_z_filtered_mdps = 0;
-    ir_tracking_sample_t sample = {0};
-    uint8_t nav_ok = race_peek_yaw(&yaw_cdeg, &gyro_z_filtered_mdps);
-    uint8_t ir_ok = IRTracking_ReadSample(&sample);
-    int32_t heading_error_cdeg = (nav_ok != 0U) ?
-        normalize_cdeg(yaw_cdeg - target_cdeg) : 0;
-
-    lc_printf("RACE_EXIT lap=%u point=%s next=%s ok=%u nav=%u target=%ld yaw=%ld herr=%ld gzlp=%ld phase_dist=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld\r\n",
-        ctx->lap_count,
-        point_name,
-        next_segment,
-        turn_success,
-        nav_ok,
-        (long)target_cdeg,
-        (long)((nav_ok != 0U) ? yaw_cdeg : 0),
-        (long)heading_error_cdeg,
-        (long)((nav_ok != 0U) ? gyro_z_filtered_mdps : 0),
-        (long)ctx->result.distance_count,
-        ir_ok,
-        (ir_ok != 0U) ? sample.raw : 0xFFU,
-        (ir_ok != 0U) ? sample.line_mask : 0U,
-        (ir_ok != 0U) ? sample.active_count : 0U,
-        (ir_ok != 0U) ? sample.line_lost : 1U,
-        (long)((ir_ok != 0U) ? sample.error : 0));
-#else
-    (void)ctx;
-    (void)point_name;
-    (void)next_segment;
-    (void)target_cdeg;
-    (void)turn_success;
-#endif
 }
 
 /**
@@ -644,7 +549,13 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
             .motor_a_pwm = RACE_EXIT_LEFT_TURN_A_PWM,
             .slow_motor_b_pwm = RACE_EXIT_LEFT_TURN_SLOW_B_PWM,
             .slow_motor_a_pwm = RACE_EXIT_LEFT_TURN_SLOW_A_PWM,
-            .yaw_stop_target_cdeg = target_cdeg
+            .yaw_stop_target_cdeg = target_cdeg,
+            .predictive_stop_enable = task4_mode ?
+                RACE_TASK4_EXIT_TURN_PREDICT_ENABLE : 0U,
+            .predictive_stop_ms = task4_mode ?
+                RACE_TASK4_EXIT_TURN_PREDICT_MS : 0,
+            .predictive_stop_min_gz_mdps = task4_mode ?
+                RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS : 0
         };
         turn_success = task4_mode ?
             race_advance_after_point_with_heading("RACE_B_ADVANCE",
@@ -655,7 +566,6 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
         if (turn_success != 0U) {
             turn_success = race_gyro_turn_to_yaw(&turn_config);
         }
-        race_log_exit_turn_result(ctx, "B", "BD", target_cdeg, turn_success);
     } else if (ctx->phase == 2U) {
         uint8_t task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
         const sensor_fast_turn_config_t turn_config = {
@@ -687,7 +597,11 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
             .motor_a_pwm = RACE_EXIT_RIGHT_TURN_A_PWM,
             .slow_motor_b_pwm = RACE_EXIT_RIGHT_TURN_SLOW_B_PWM,
             .slow_motor_a_pwm = RACE_EXIT_RIGHT_TURN_SLOW_A_PWM,
-            .yaw_stop_target_cdeg = target_cdeg
+            .yaw_stop_target_cdeg = target_cdeg,
+            .predictive_stop_enable = RACE_TASK4_EXIT_TURN_PREDICT_ENABLE,
+            .predictive_stop_ms = RACE_TASK4_EXIT_TURN_PREDICT_MS,
+            .predictive_stop_min_gz_mdps =
+                RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS
         };
         turn_success = race_advance_after_point_with_heading("RACE_A_ADVANCE",
             RACE_ARC_POINT_ADVANCE_COUNT,
@@ -695,7 +609,6 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
         if (turn_success != 0U) {
             turn_success = race_gyro_turn_to_yaw(&turn_config);
         }
-        race_log_exit_turn_result(ctx, "A", "AC", target_cdeg, turn_success);
     }
 
     return turn_success;
@@ -829,95 +742,13 @@ static void race_advance_segment(race_context_t *ctx, uint8_t point_event)
 }
 
 /**
- * @brief Print periodic race data when UART race logging is enabled.
+ * @brief Keep the loop call site stable after removing live UART reports.
  */
 static void race_log_periodic_data(race_context_t *ctx,
     const race_phase_config_t *config)
 {
-#if RACE_STRAIGHT_DIAG_LOG_ENABLE
-    if (ctx->report_elapsed_ms < RACE_STRAIGHT_DIAG_REPORT_PERIOD_MS) {
-        return;
-    }
-
-    ctx->report_elapsed_ms = 0;
-    if (config->arc_mode == 0U) {
-        lc_printf("RACE_ST lap=%u seg=%s t=%lu dist=%ld yaw=%ld exp=%ld herr=%ld gzlp=%ld nav=%ld Bspd=%ld Aspd=%ld vdiff=%ld tdiff=%ld ff=%ld fb=%ld corr=%ld base=%ld pwm=%ld/%ld raw=0x%02X mask=0x%02X cnt=%u lost=%u irerr=%ld\r\n",
-            ctx->lap_count,
-            config->phase_name,
-            ctx->elapsed_ms,
-            ctx->phase_distance_count,
-            ctx->yaw_cdeg,
-            ctx->expected_yaw_cdeg,
-            ctx->heading_error_cdeg,
-            ctx->gyro_z_filtered_mdps,
-            ctx->nav_turn,
-            ctx->drive.motor_b_speed,
-            ctx->drive.motor_a_speed,
-            ctx->drive.speed_diff,
-            ctx->target_speed_diff,
-            ctx->drive.feedforward_correction,
-            ctx->drive.feedback_correction,
-            ctx->drive.correction,
-            ctx->base_pwm,
-            ctx->left_pwm,
-            ctx->right_pwm,
-            (ctx->ir_ok != 0U) ? ctx->sample.raw : 0xFFU,
-            (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U,
-            (ctx->ir_ok != 0U) ? ctx->sample.active_count : 0U,
-            (ctx->ir_ok != 0U) ? ctx->sample.line_lost : 1U,
-            (ctx->ir_ok != 0U) ? ctx->sample.error : 0);
-    }
-#elif RACE_DISTANCE_LOG_ENABLE
     (void)ctx;
     (void)config;
-#else
-    if (ctx->report_elapsed_ms < RACE_LINE_REPORT_PERIOD_MS) {
-        return;
-    }
-
-    ctx->report_elapsed_ms = 0;
-#if RACE_UART_LOG_ENABLE
-    race_log_printf("RACE_DATA lap=%u seg=%s phase=%u t=%lu dist=%ld edge=%u line_seen_n=%u pflags=0x%02X nav=%u nav_fd=%lu upd=0x%02X yaw=%ld yaw_raw=%ld pyaw=%ld yprog=%ld exp=%ld herr=%ld gz=%ld gzlp=%ld roll=%ld pitch=%ld raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld filt=%ld der=%ld line_turn=%ld nav_turn=%ld turn=%ld tdiff=%ld ff=%ld fb=%ld corr=%ld base=%ld pwm=%ld/%ld\r\n",
-        ctx->lap_count,
-        config->phase_name,
-        ctx->phase,
-        ctx->elapsed_ms,
-        ctx->phase_distance_count,
-        ctx->edge_point_seen,
-        ctx->straight_line_seen_count,
-        ctx->point_log_flags,
-        ctx->nav_ok,
-        ctx->nav_frame_delta,
-        ctx->nav_update_flags,
-        ctx->yaw_cdeg,
-        ctx->yaw_raw_cdeg,
-        ctx->phase_yaw_cdeg,
-        ctx->yaw_progress_cdeg,
-        ctx->expected_yaw_cdeg,
-        ctx->heading_error_cdeg,
-        ctx->gyro_z_mdps,
-        ctx->gyro_z_filtered_mdps,
-        ctx->roll_cdeg,
-        ctx->pitch_cdeg,
-        (ctx->ir_ok != 0U) ? ctx->sample.raw : 0xFFU,
-        (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U,
-        (ctx->ir_ok != 0U) ? ctx->sample.active_count : 0U,
-        (ctx->ir_ok != 0U) ? ctx->sample.line_lost : 1U,
-        (ctx->ir_ok != 0U) ? ctx->sample.error : 0,
-        ctx->filtered_error,
-        ctx->derivative,
-        ctx->line_turn,
-        ctx->nav_turn,
-        ctx->control_turn,
-        ctx->target_speed_diff,
-        ctx->drive.feedforward_correction,
-        ctx->drive.feedback_correction,
-        ctx->drive.correction,
-        ctx->base_pwm,
-        ctx->left_pwm,
-        ctx->right_pwm);
-#endif
-#endif
 }
 
 /**
@@ -997,7 +828,6 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
 
     TB6612_Brake();
     delay_ms_with_st011(RACE_POINT_SETTLE_MS);
-#if RACE_DISTANCE_LOG_ENABLE && !RACE_UART_LOG_ENABLE
     {
         jy62_navigation_t zero_nav = {0};
 
@@ -1007,12 +837,6 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
             g_jy62_zero_ready = 1U;
         }
     }
-#else
-    (void)jy62_zero_to_current(
-        (task4_mode != 0U) ? "RACE_TASK4_AB_ZERO" :
-            ((task3_mode != 0U) ? "RACE_TASK3_AB_ZERO" : "RACE_AC_ZERO"),
-        0U);
-#endif
     if ((task3_mode != 0U) || (task4_mode != 0U)) {
         delay_ms_with_st011(RACE_POINT_SETTLE_MS);
         uint8_t align_ok = (task4_mode != 0U) ?
@@ -1127,16 +951,6 @@ static void race_finish_lap_context(race_context_t *ctx)
         &ctx->sample,
         0,
         0);
-    race_event_printf("RACE_EVT_RT event=complete reason=%s t=%lu lap=%u phase=%u\r\n",
-        race_reason_name(ctx->stop_reason),
-        ctx->elapsed_ms,
-        ctx->lap_count,
-        ctx->phase);
-    race_log_printf("RACE complete: ac_zero_collect reason=%s t=%lu lap=%u phase=%u\r\n",
-        race_reason_name(ctx->stop_reason),
-        ctx->elapsed_ms,
-        ctx->lap_count,
-        ctx->phase);
     race_ram_log_dump(ctx->target_laps);
 }
 

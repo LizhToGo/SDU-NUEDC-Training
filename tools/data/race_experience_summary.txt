@@ -1,0 +1,35 @@
+=== RACE_RUN run_id=race_672cd7a36e2c imported_at=2026-06-18T16:36:14 source=result.txt validation_ok=0 ===
+records=760
+ram_begin=1 cfg=1 ram_end=1
+seq: count=760 unique=760 range=0..759 missing=0
+evt_idx: count=86 unique=86 range=0..85 missing=0
+sum_idx: count=16 unique=16 range=0..15 missing=0
+win_idx: count=254 unique=254 range=0..506 missing=253
+EVT: expected=86 section=86 actual=86 end=1 ok=1
+SUM: expected=16 section=16 actual=16 end=1 ok=1
+WIN: expected=254 section=254 actual=254 end=1 ok=1
+overflow: win_ov=0 ev_ov=0 sum_ov=0 ok=1
+complete: lap=4 phase=3 t=20205 reason=point
+
+SUM_BY_SEG
+AC: n=4 dist=[7409, 7401, 7406, 7533] dist_avg=7437.2 yprog=[1995, 208, 320, 179] avg_herr=[582, 766, 868, 770] max_herr=[2119, 2129, 2344, 2168] avg_line=[5, 0, 0, 1] avg_nav=[-39, -56, -53, -53] avg_turn=[-39, -56, -53, -53] line_n=[10, 1, 1, 1] line_first=[79, 7401, 7406, 7533] line_last=[7409, 7401, 7406, 7533] line_span=[7330, 0, 0, 0] end_gap=[0, 0, 0, 0] lost_streak=[66, 75, 75, 76] end_lost=[0, 0, 0, 0] pflags=['0x11', '0x11', '0x11', '0x11'] lost_sum=295 nav_lost_sum=0
+CB: n=4 dist=[7511, 7156, 7219, 7081] dist_avg=7241.8 yprog=[17359, 16172, 16321, 16113] avg_herr=[1798, 519, 549, 682] max_herr=[2352, 1208, 1037, 1209] avg_line=[-51, -16, -20, -17] avg_nav=[0, 0, 0, 0] avg_turn=[-51, -16, -20, -17] line_n=[91, 87, 88, 86] line_first=[54, 31, 31, 31] line_last=[7432, 7076, 7139, 7002] line_span=[7378, 7045, 7108, 6971] end_gap=[79, 80, 80, 79] lost_streak=[1, 1, 1, 1] end_lost=[1, 1, 1, 1] pflags=['0x43', '0x43', '0x43', '0x43'] lost_sum=4 nav_lost_sum=0
+BD: n=4 dist=[7410, 7449, 7429, 7414] dist_avg=7425.5 yprog=[90, 128, 6, 52] avg_herr=[683, 674, 735, 812] max_herr=[1918, 1988, 2014, 2179] avg_line=[0, 0, 0, 0] avg_nav=[61, 57, 63, 66] avg_turn=[61, 57, 63, 66] line_n=[0, 0, 0, 0] line_first=[0, 0, 0, 0] line_last=[0, 0, 0, 0] line_span=[0, 0, 0, 0] end_gap=[0, 0, 0, 0] lost_streak=[76, 76, 76, 76] end_lost=[76, 76, 76, 76] pflags=['0x03', '0x03', '0x03', '0x03'] lost_sum=304 nav_lost_sum=0
+DA: n=4 dist=[7785, 7690, 7938, 7838] dist_avg=7812.8 yprog=[15087, 14722, 14532, 14611] avg_herr=[1619, 1708, 2149, 2051] max_herr=[2273, 2416, 3012, 2927] avg_line=[12, 7, 12, 3] avg_nav=[0, 0, 0, 0] avg_turn=[12, 7, 12, 3] line_n=[93, 92, 95, 95] line_first=[192, 190, 255, 119] line_last=[7708, 7613, 7860, 7760] line_span=[7516, 7423, 7605, 7641] end_gap=[77, 77, 78, 78] lost_streak=[1, 1, 1, 1] end_lost=[1, 1, 1, 1] pflags=['0x43', '0x43', '0x43', '0x43'] lost_sum=4 nav_lost_sum=0
+
+TURN_START_STOP
+lap=0 seg=AC phase_dist=7409 yaw0=-3209 yaw1=-3201 ydelta=8 target=0 yerr=0 yaw_stop=0 reason=point turn_dist=92
+lap=0 seg=CB phase_dist=7511 yaw0=17177 yaw1=-14223 ydelta=4600 target=-14290 yerr=67 yaw_stop=1 reason=yaw turn_dist=712
+lap=0 seg=BD phase_dist=7511 yaw0=-14133 yaw1=-17190 ydelta=-3057 target=-17133 yerr=-57 yaw_stop=1 reason=yaw turn_dist=803
+lap=0 seg=DA phase_dist=7785 yaw0=970 yaw1=-3357 ydelta=-4327 target=-3250 yerr=-107 yaw_stop=1 reason=yaw turn_dist=668
+lap=1 seg=AC phase_dist=7401 yaw0=-3193 yaw1=-660 ydelta=2533 target=0 yerr=0 yaw_stop=0 reason=point turn_dist=742
+lap=1 seg=CB phase_dist=7156 yaw0=17269 yaw1=-14096 ydelta=4635 target=-14290 yerr=194 yaw_stop=1 reason=yaw turn_dist=708
+lap=1 seg=BD phase_dist=7156 yaw0=-14224 yaw1=-17569 ydelta=-3345 target=-17224 yerr=-345 yaw_stop=1 reason=yaw turn_dist=869
+lap=1 seg=DA phase_dist=7690 yaw0=1137 yaw1=-3409 ydelta=-4546 target=-3250 yerr=-159 yaw_stop=1 reason=yaw turn_dist=710
+lap=2 seg=AC phase_dist=7406 yaw0=-3122 yaw1=-829 ydelta=2137 target=0 yerr=0 yaw_stop=0 reason=point turn_dist=692
+lap=2 seg=CB phase_dist=7219 yaw0=17139 yaw1=-14153 ydelta=4708 target=-14290 yerr=137 yaw_stop=1 reason=yaw turn_dist=709
+lap=2 seg=BD phase_dist=7219 yaw0=-14159 yaw1=-17169 ydelta=-3010 target=-17159 yerr=-10 yaw_stop=1 reason=yaw turn_dist=803
+lap=2 seg=DA phase_dist=7938 yaw0=1008 yaw1=-3321 ydelta=-4329 target=-3250 yerr=-71 yaw_stop=1 reason=yaw turn_dist=664
+lap=3 seg=AC phase_dist=7533 yaw0=-3156 yaw1=-728 ydelta=2428 target=0 yerr=0 yaw_stop=0 reason=point turn_dist=734
+lap=3 seg=CB phase_dist=7081 yaw0=17134 yaw1=-14256 ydelta=4610 target=-14290 yerr=34 yaw_stop=1 reason=yaw turn_dist=711
+lap=3 seg=BD phase_dist=7081 yaw0=-14204 yaw1=-17517 ydelta=-3313 target=-17204 yerr=-313 yaw_stop=1 reason=yaw turn_dist=880

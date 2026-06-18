@@ -41,21 +41,6 @@ static uint8_t race_peek_yaw(int32_t *yaw_cdeg, int32_t *gyro_z_filtered_mdps)
 }
 
 /**
- * @brief Print one short point-result line for race debugging.
- */
-static void race_print_point(const char *name, const line_result_t *result)
-{
-    race_log_printf("RACE_POINT %s reason=%s t=%lu dist=%ld yaw=%ld mask=0x%02X err=%ld\r\n",
-        name,
-        race_reason_name(result->reason),
-        result->elapsed_ms,
-        result->distance_count,
-        result->yaw_cdeg,
-        (result->ir_ok != 0U) ? result->sample.line_mask : 0U,
-        (result->ir_ok != 0U) ? result->sample.error : 0);
-}
-
-/**
  * @brief Reset the race differential wheel-speed PID gains.
  */
 static void race_diff_pid_reset(straight_pid_t *pid)
@@ -180,6 +165,18 @@ static uint8_t race_turn_crossed_target(uint8_t error_valid,
     return ((error_valid != 0U) &&
         (((last_error_cdeg < 0) && (current_error_cdeg >= 0)) ||
          ((last_error_cdeg > 0) && (current_error_cdeg <= 0)))) ? 1U : 0U;
+}
+
+/**
+ * @brief Predict yaw drift caused by current gyro-Z over a short time window.
+ */
+static int32_t race_predict_yaw_delta_cdeg(int32_t gyro_z_filtered_mdps,
+    int32_t predict_ms)
+{
+    if (predict_ms <= 0) {
+        return 0;
+    }
+    return (int32_t)((gyro_z_filtered_mdps * predict_ms) / 10000);
 }
 
 /**
@@ -565,6 +562,8 @@ static uint8_t race_gyro_turn_to_yaw(
     int32_t turn_yaw_delta = 0;
     int32_t yaw_stop_error_cdeg = 0;
     int32_t last_yaw_stop_error_cdeg = 0;
+    int32_t predicted_yaw_stop_error_cdeg = 0;
+    int32_t predicted_yaw_delta_cdeg = 0;
     int32_t turn_gyro_z_filtered_mdps = 0;
     uint8_t stop_reason = 0U;
     uint8_t ir_ok = 0U;
@@ -572,6 +571,7 @@ static uint8_t race_gyro_turn_to_yaw(
     uint8_t slow_mode = 0U;
     uint8_t yaw_error_valid = 0U;
     uint8_t yaw_cross_ready = 0U;
+    uint8_t predictive_stop_ready = 0U;
 
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
@@ -642,6 +642,28 @@ static uint8_t race_gyro_turn_to_yaw(
         turn_yaw_delta = normalize_cdeg(nav.yaw_relative_cdeg - turn_yaw_start);
         yaw_stop_error_cdeg = normalize_cdeg(nav.yaw_relative_cdeg -
             yaw_stop_target_cdeg);
+        predictive_stop_ready = 0U;
+        predicted_yaw_delta_cdeg = 0;
+        predicted_yaw_stop_error_cdeg = yaw_stop_error_cdeg;
+        if ((config->predictive_stop_enable != 0U) &&
+            (abs_i32(nav.gyro_z_filtered_mdps) >=
+                abs_i32(config->predictive_stop_min_gz_mdps))) {
+            predicted_yaw_delta_cdeg = race_predict_yaw_delta_cdeg(
+                nav.gyro_z_filtered_mdps,
+                config->predictive_stop_ms);
+            predicted_yaw_stop_error_cdeg = normalize_cdeg(
+                nav.yaw_relative_cdeg + predicted_yaw_delta_cdeg -
+                yaw_stop_target_cdeg);
+            if ((abs_i32(predicted_yaw_stop_error_cdeg) <
+                    abs_i32(yaw_stop_error_cdeg)) &&
+                ((abs_i32(predicted_yaw_stop_error_cdeg) <=
+                    RACE_TURN_YAW_STOP_TOL_CDEG) ||
+                 (race_turn_crossed_target(1U,
+                    yaw_stop_error_cdeg,
+                    predicted_yaw_stop_error_cdeg) != 0U))) {
+                predictive_stop_ready = 1U;
+            }
+        }
         yaw_cross_ready = race_turn_crossed_target(yaw_error_valid,
             last_yaw_stop_error_cdeg,
             yaw_stop_error_cdeg);
@@ -654,7 +676,8 @@ static uint8_t race_gyro_turn_to_yaw(
             TB6612_SetDifferential(slow_motor_b_pwm, slow_motor_a_pwm);
         }
         if ((abs_i32(yaw_stop_error_cdeg) <= RACE_TURN_YAW_STOP_TOL_CDEG) ||
-            (yaw_cross_ready != 0U)) {
+            (yaw_cross_ready != 0U) ||
+            (predictive_stop_ready != 0U)) {
             stop_reason = 6U;
             break;
         }
@@ -695,7 +718,7 @@ static uint8_t race_gyro_turn_to_yaw(
         stop_reason,
         g_race_log_lap,
         g_race_log_phase,
-        0U,
+        (predictive_stop_ready != 0U) ? RACE_LOG_FLAG_PREDICT_STOP : 0U,
         race_post_point_event_ms(elapsed_ms),
         motion_distance_count(motor_b_total, motor_a_total),
         g_race_post_point_phase_dist_count,
@@ -1126,19 +1149,6 @@ static uint8_t race_drive_forward_until_line(const char *tag, int32_t max_count)
     encoder_get_total_counts(&motor_b_total, &motor_a_total);
     distance_count = motion_distance_count(motor_b_total, motor_a_total);
     ir_ok = IRTracking_ReadSample(&sample);
-#if RACE_DISTANCE_LOG_ENABLE
-    lc_printf("%s result=%s dist=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld\r\n",
-        tag,
-        (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "distance" :
-            ((stop_reason == 3U) ? "uart_stop" : "timeout")),
-        distance_count,
-        ir_ok,
-        (ir_ok != 0U) ? sample.raw : 0xFFU,
-        (ir_ok != 0U) ? sample.line_mask : 0U,
-        (ir_ok != 0U) ? sample.active_count : 0U,
-        (ir_ok != 0U) ? sample.line_lost : 1U,
-        (ir_ok != 0U) ? sample.error : 0);
-#endif
     race_log_printf("%s stop: reason=%s t=%lu dist=%ld ir=%u mask=0x%02X cnt=%u lost=%u err=%ld\r\n",
         tag,
         (stop_reason == 1U) ? "line" : ((stop_reason == 2U) ? "distance" :

@@ -28,6 +28,23 @@ enum {
 #define RACE_LOG_FLAG_GUIDE_SEEN       (0x10U)
 #define RACE_LOG_FLAG_START_WINDOW     (0x20U)
 #define RACE_LOG_FLAG_ARC_MODE         (0x40U)
+#define RACE_LOG_FLAG_PREDICT_STOP     (0x80U)
+
+#ifndef RACE_DUMP_SUM_ENABLE
+#define RACE_DUMP_SUM_ENABLE           (1)
+#endif
+#ifndef RACE_DUMP_EVT_ENABLE
+#define RACE_DUMP_EVT_ENABLE           (1)
+#endif
+#ifndef RACE_DUMP_WIN_ENABLE
+#define RACE_DUMP_WIN_ENABLE           (1)
+#endif
+#ifndef RACE_DUMP_WIN_STRIDE
+#define RACE_DUMP_WIN_STRIDE           (1)
+#endif
+#ifndef RACE_RAM_WINDOW_LOG_STRIDE
+#define RACE_RAM_WINDOW_LOG_STRIDE     (1)
+#endif
 
 /* Elapsed time spent in post-point actions; used to keep event timestamps monotonic. */
 static uint32_t g_race_post_point_elapsed_ms;
@@ -200,6 +217,7 @@ static uint8_t g_race_summary_log_count;
 static uint16_t g_race_window_log_overflow;
 static uint16_t g_race_event_log_overflow;
 static uint8_t g_race_summary_log_overflow;
+static uint16_t g_race_window_log_decimator;
 static uint8_t g_race_log_lap;
 static uint8_t g_race_log_phase;
 static uint32_t g_race_post_point_base_ms;
@@ -300,6 +318,7 @@ static void race_ram_log_reset(void)
     g_race_window_log_overflow = 0U;
     g_race_event_log_overflow = 0U;
     g_race_summary_log_overflow = 0U;
+    g_race_window_log_decimator = 0U;
     g_race_log_lap = 0U;
     g_race_log_phase = 0U;
     g_race_segment_accum.sample_count = 0U;
@@ -554,6 +573,12 @@ static void race_ram_log_window_sample(uint8_t lap,
     race_window_log_t *log;
     uint8_t line_lost = ((ir_ok == 0U) || (sample->line_lost != 0U)) ? 1U : 0U;
 
+#if RACE_RAM_WINDOW_LOG_STRIDE > 1
+    if ((g_race_window_log_decimator++ % RACE_RAM_WINDOW_LOG_STRIDE) != 0U) {
+        return;
+    }
+#endif
+
     if (g_race_window_log_count >= RACE_RAM_WINDOW_CAPACITY) {
         g_race_window_log_overflow++;
         return;
@@ -758,6 +783,10 @@ static void race_ram_log_dump(uint8_t target_laps)
     int32_t bd_target_cdeg = task4_mode ?
         RACE_TASK4_BD_HEADING_TARGET_CDEG :
         RACE_TASK3_BD_HEADING_TARGET_CDEG;
+    int32_t line_base_pwm = task4_mode ?
+        RACE_TASK4_STRAIGHT_BASE_PWM : RACE_STRAIGHT_BASE_PWM;
+    int32_t arc_base_pwm = task4_mode ?
+        RACE_TASK4_ARC_BASE_PWM : RACE_ARC_BASE_PWM;
 
     if (window_count > RACE_RAM_WINDOW_CAPACITY) {
         window_overflow++;
@@ -772,7 +801,7 @@ static void race_ram_log_dump(uint8_t target_laps)
         summary_count = RACE_RAM_SUMMARY_CAPACITY;
     }
 
-    lc_printf("RACE_RAM_BEGIN seq=%lu win=%u/%u win_ov=%u ev=%u/%u ev_ov=%u sum=%u/%u sum_ov=%u max_laps=%u\r\n",
+    lc_printf("RACE_RAM_BEGIN seq=%lu win=%u/%u win_ov=%u ev=%u/%u ev_ov=%u sum=%u/%u sum_ov=%u max_laps=%u log_stride=%u\r\n",
         (unsigned long)seq++,
         window_count,
         RACE_RAM_WINDOW_CAPACITY,
@@ -783,164 +812,233 @@ static void race_ram_log_dump(uint8_t target_laps)
         summary_count,
         RACE_RAM_SUMMARY_CAPACITY,
         summary_overflow,
-        RACE_RAM_LOG_MAX_LAPS);
+        RACE_RAM_LOG_MAX_LAPS,
+        (unsigned int)RACE_RAM_WINDOW_LOG_STRIDE);
     race_ram_dump_line_pause();
-    lc_printf("RACE_CFG seq=%lu line_base=%d arc_base=%d gyro_st=%u ir_assist=%u h_div=%d h_max=%d h_gd=%d ac_tgt=%ld bd_tgt=%ld gyro_to=%d arc_yaw=%u arc_div=%d arc_max=%d arc_gd=%d arc_yaw_arm=%d win_pre=%d win_start=%d turn_slow=%u turn_slow_yaw=%d yaw_stop=%u yaw_tol=%d yaw_gz=%d b_exit=%ld a_exit=%ld ff_gain=%d\r\n",
+    lc_printf("RACE_CFG_MAIN seq=%lu laps=%u mode=%u line_base=%ld arc_base=%ld ac_tgt=%ld bd_tgt=%ld gyro_to=%d ff_gain=%d\r\n",
         (unsigned long)seq++,
-        RACE_LINE_BASE_PWM,
-        RACE_ARC_BASE_PWM,
+        (unsigned int)target_laps,
+        (unsigned int)task4_mode,
+        (long)line_base_pwm,
+        (long)arc_base_pwm,
+        (long)ac_target_cdeg,
+        (long)bd_target_cdeg,
+        RACE_GYRO_TURN_TIMEOUT_MS,
+        RACE_DIFF_FF_GAIN);
+    race_ram_dump_line_pause();
+    lc_printf("RACE_CFG_ST seq=%lu gyro_st=%u ir_assist=%u h_div=%d h_max=%d h_gd=%d win_pre=%d win_start=%d\r\n",
+        (unsigned long)seq++,
         RACE_STRAIGHT_GYRO_NAV_ENABLE,
         RACE_STRAIGHT_IR_ASSIST_ENABLE,
         RACE_STRAIGHT_HEADING_CORR_DIVISOR,
         RACE_STRAIGHT_HEADING_CORR_MAX,
         RACE_STRAIGHT_GYRO_DAMP_DIVISOR,
-        (long)ac_target_cdeg,
-        (long)bd_target_cdeg,
-        RACE_GYRO_TURN_TIMEOUT_MS,
+        RACE_RAM_WINDOW_BEFORE_COUNT,
+        RACE_RAM_WINDOW_AFTER_START_COUNT);
+    race_ram_dump_line_pause();
+    lc_printf("RACE_CFG_ARC seq=%lu arc_yaw=%u arc_div=%d arc_max=%d arc_gd=%d arc_yaw_arm=%d\r\n",
+        (unsigned long)seq++,
         RACE_ARC_YAW_NAV_ENABLE,
         RACE_ARC_YAW_CORR_DIVISOR,
         RACE_ARC_YAW_CORR_MAX,
         RACE_ARC_GYRO_DAMP_DIVISOR,
-        RACE_ARC_POINT_YAW_ARM_CDEG,
-        RACE_RAM_WINDOW_BEFORE_COUNT,
-        RACE_RAM_WINDOW_AFTER_START_COUNT,
+        RACE_ARC_POINT_YAW_ARM_CDEG);
+    race_ram_dump_line_pause();
+    lc_printf("RACE_CFG_TURN seq=%lu turn_slow=%u slow_yaw=%d yaw_stop=%u yaw_tol=%d yaw_gz=%d b_exit=%ld a_exit=%ld\r\n",
+        (unsigned long)seq++,
         RACE_FAST_TURN_GYRO_SLOW_ENABLE,
         RACE_FAST_TURN_GYRO_SLOW_CDEG,
         RACE_EXIT_TURN_YAW_STOP_ENABLE,
         RACE_TURN_YAW_STOP_TOL_CDEG,
         RACE_TURN_YAW_STOP_GZLP_TOL_MDPS,
         (long)bd_target_cdeg,
-        (long)ac_target_cdeg,
-        RACE_DIFF_FF_GAIN);
+        (long)ac_target_cdeg);
     race_ram_dump_line_pause();
-
-    lc_printf("RACE_DUMP_SECTION seq=%lu name=EVT count=%u\r\n",
+    lc_printf("RACE_CFG_DUMP seq=%lu sum=%u evt=%u win=%u win_stride=%u line_delay=%u section_delay=%u\r\n",
         (unsigned long)seq++,
-        event_count);
+        (unsigned int)RACE_DUMP_SUM_ENABLE,
+        (unsigned int)RACE_DUMP_EVT_ENABLE,
+        (unsigned int)RACE_DUMP_WIN_ENABLE,
+        (unsigned int)RACE_DUMP_WIN_STRIDE,
+        (unsigned int)RACE_DUMP_LINE_DELAY_MS,
+        (unsigned int)RACE_DUMP_SECTION_DELAY_MS);
     race_ram_dump_line_pause();
-    for (i = 0U; i < event_count; i++) {
-        const race_event_log_t *log = &g_race_event_log[i];
-        lc_printf("RACE_EVT seq=%lu idx=%u lap=%u seg=%s phase=%u event=%s reason=%s t=%lu dist=%u phase_dist=%u yaw=%d yprog=%d ydelta=%d exp=%d herr=%d nav_turn=%d gz100=%d raw=0x%02X mask=0x%02X cnt=%u flags=0x%02X err=%d B=%d A=%d\r\n",
-            (unsigned long)seq++,
-            i,
-            log->lap,
-            race_phase_name(log->phase),
-            log->phase,
-            race_ram_event_name(log->event),
-            race_reason_name(log->reason),
-            log->t_ms,
-            log->dist_count,
-            log->phase_dist_count,
-            log->yaw_cdeg,
-            log->yaw_progress_cdeg,
-            log->yaw_delta_cdeg,
-            log->expected_yaw_cdeg,
-            log->heading_error_cdeg,
-            log->nav_turn,
-            log->gzlp_x100_mdps,
-            log->raw,
-            log->line_mask,
-            log->active_count,
-            log->flags,
-            log->line_error,
-            log->motor_b_total,
-            log->motor_a_total);
-        race_ram_dump_line_pause();
-    }
-    lc_printf("RACE_DUMP_SECTION_END seq=%lu name=EVT\r\n",
-        (unsigned long)seq++);
-    race_ram_dump_section_pause();
 
+    lc_printf("RACE_DUMP_MARK seq=%lu step=sum_begin\r\n",
+        (unsigned long)seq++);
+    race_ram_dump_line_pause();
+#if RACE_DUMP_SUM_ENABLE
     lc_printf("RACE_DUMP_SECTION seq=%lu name=SUM count=%u\r\n",
         (unsigned long)seq++,
-        summary_count);
+        (unsigned int)summary_count);
     race_ram_dump_line_pause();
     for (i = 0U; i < summary_count; i++) {
         const race_summary_log_t *log = &g_race_summary_log[i];
-        lc_printf("RACE_SUM seq=%lu idx=%u lap=%u seg=%s phase=%u reason=%s t=%lu/%lu dist=%u n=%u nav_n=%u nav_lost=%u nav_fd=%u nav_stale=%u upd=0x%02X line_n=%u line_first=%u line_last=%u line_span=%u end_gap=%u lost=%u lost_streak=%u end_lost=%u yaw=%d/%d yprog=%d end_herr=%d avg_herr=%d max_herr=%u avg_gz=%d max_gz=%u avg_gzlp=%d max_gzlp=%u avg_line=%d avg_nav=%d avg_turn=%d avg_abs_err=%d max_err=%u pmask=0x%02X pflags=0x%02X\r\n",
+        lc_printf("RACE_SEG seq=%lu idx=%u lap=%u ph=%u rsn=%u t0=%lu t1=%lu dist=%u n=%u\r\n",
             (unsigned long)seq++,
-            i,
-            log->lap,
-            race_phase_name(log->phase),
-            log->phase,
-            race_reason_name(log->reason),
-            log->start_ms,
-            log->end_ms,
-            log->dist_count,
-            log->sample_count,
-            log->nav_sample_count,
-            log->nav_lost_count,
-            log->nav_frame_count,
-            log->nav_stale_count,
-            log->nav_update_flags,
-            log->line_seen_count,
-            log->first_line_dist_count,
-            log->last_line_dist_count,
-            log->line_span_count,
-            log->end_gap_count,
-            log->lost_count,
-            log->max_lost_streak_count,
-            log->end_lost_streak_count,
-            log->yaw_start_cdeg,
-            log->yaw_end_cdeg,
-            log->yaw_progress_cdeg,
-            log->end_heading_error_cdeg,
-            log->avg_abs_heading_error,
-            log->max_abs_heading_error,
-            log->avg_gyro_z_x100_mdps,
-            log->max_abs_gyro_z_x100_mdps,
-            log->avg_gzlp_x100_mdps,
-            log->max_abs_gzlp_x100_mdps,
-            log->avg_line_turn,
-            log->avg_nav_turn,
-            log->avg_turn,
-            log->avg_abs_error,
-            log->max_abs_error,
-            log->point_mask,
-            log->point_flags);
+            (unsigned int)i,
+            (unsigned int)log->lap,
+            (unsigned int)log->phase,
+            (unsigned int)log->reason,
+            (unsigned long)log->start_ms,
+            (unsigned long)log->end_ms,
+            (unsigned int)log->dist_count,
+            (unsigned int)log->sample_count);
+        race_ram_dump_line_pause();
+        lc_printf("RACE_SEG_LINE seq=%lu idx=%u seen=%u first=%u last=%u span=%u gap=%u lost=%u maxlost=%u endlost=%u pm=0x%02X pf=0x%02X\r\n",
+            (unsigned long)seq++,
+            (unsigned int)i,
+            (unsigned int)log->line_seen_count,
+            (unsigned int)log->first_line_dist_count,
+            (unsigned int)log->last_line_dist_count,
+            (unsigned int)log->line_span_count,
+            (unsigned int)log->end_gap_count,
+            (unsigned int)log->lost_count,
+            (unsigned int)log->max_lost_streak_count,
+            (unsigned int)log->end_lost_streak_count,
+            (unsigned int)log->point_mask,
+            (unsigned int)log->point_flags);
+        race_ram_dump_line_pause();
+        lc_printf("RACE_SEG_YAW seq=%lu idx=%u yaw0=%d yaw1=%d ypr=%d herr=%d avgh=%d maxh=%u turn=%d/%d/%d\r\n",
+            (unsigned long)seq++,
+            (unsigned int)i,
+            (int)log->yaw_start_cdeg,
+            (int)log->yaw_end_cdeg,
+            (int)log->yaw_progress_cdeg,
+            (int)log->end_heading_error_cdeg,
+            (int)log->avg_abs_heading_error,
+            (unsigned int)log->max_abs_heading_error,
+            (int)log->avg_line_turn,
+            (int)log->avg_nav_turn,
+            (int)log->avg_turn);
+        race_ram_dump_line_pause();
+        lc_printf("RACE_SEG_NAV seq=%lu idx=%u nav=%u lost=%u fd=%u stale=%u upd=0x%02X gz=%d/%u gzl=%d/%u err=%d/%u\r\n",
+            (unsigned long)seq++,
+            (unsigned int)i,
+            (unsigned int)log->nav_sample_count,
+            (unsigned int)log->nav_lost_count,
+            (unsigned int)log->nav_frame_count,
+            (unsigned int)log->nav_stale_count,
+            (unsigned int)log->nav_update_flags,
+            (int)log->avg_gyro_z_x100_mdps,
+            (unsigned int)log->max_abs_gyro_z_x100_mdps,
+            (int)log->avg_gzlp_x100_mdps,
+            (unsigned int)log->max_abs_gzlp_x100_mdps,
+            (int)log->avg_abs_error,
+            (unsigned int)log->max_abs_error);
         race_ram_dump_line_pause();
     }
     lc_printf("RACE_DUMP_SECTION_END seq=%lu name=SUM\r\n",
         (unsigned long)seq++);
     race_ram_dump_section_pause();
+#endif
 
-    lc_printf("RACE_DUMP_SECTION seq=%lu name=WIN count=%u\r\n",
-        (unsigned long)seq++,
-        window_count);
+    lc_printf("RACE_DUMP_MARK seq=%lu step=evt_begin\r\n",
+        (unsigned long)seq++);
     race_ram_dump_line_pause();
-    for (i = 0U; i < window_count; i++) {
-        const race_window_log_t *log = &g_race_window_log[i];
-        lc_printf("RACE_WIN seq=%lu idx=%u lap=%u seg=%s phase=%u t=%lu dist=%u yaw=%d yaw_raw=%d pyaw=%d yprog=%d exp=%d herr=%d err=%d nav_turn=%d turn=%d gz=%d gzlp=%d roll=%d pitch=%d nav_fd=%u upd=0x%02X mask=0x%02X cnt=%u flags=0x%02X\r\n",
+#if RACE_DUMP_EVT_ENABLE
+    lc_printf("RACE_DUMP_SECTION seq=%lu name=EVT count=%u\r\n",
+        (unsigned long)seq++,
+        (unsigned int)event_count);
+    race_ram_dump_line_pause();
+    for (i = 0U; i < event_count; i++) {
+        const race_event_log_t *log = &g_race_event_log[i];
+        lc_printf("RACE_EVT seq=%lu idx=%u lap=%u ph=%u ev=%u rsn=%u t=%lu dist=%u pd=%u raw=0x%02X mask=0x%02X cnt=%u fl=0x%02X\r\n",
             (unsigned long)seq++,
-            i,
-            log->lap,
-            race_phase_name(log->phase),
-            log->phase,
-            log->t_ms,
-            log->dist_count,
-            log->yaw_cdeg,
-            log->yaw_raw_cdeg,
-            log->phase_yaw_cdeg,
-            log->yaw_progress_cdeg,
-            log->expected_yaw_cdeg,
-            log->heading_error_cdeg,
-            log->line_error,
-            log->nav_turn,
-            log->control_turn,
-            log->gyro_z_x100_mdps,
-            log->gzlp_x100_mdps,
-            log->roll_cdeg,
-            log->pitch_cdeg,
-            log->nav_frame_delta,
-            log->nav_update_flags,
-            log->line_mask,
-            log->active_count,
-            log->flags);
+            (unsigned int)i,
+            (unsigned int)log->lap,
+            (unsigned int)log->phase,
+            (unsigned int)log->event,
+            (unsigned int)log->reason,
+            (unsigned long)log->t_ms,
+            (unsigned int)log->dist_count,
+            (unsigned int)log->phase_dist_count,
+            (unsigned int)log->raw,
+            (unsigned int)log->line_mask,
+            (unsigned int)log->active_count,
+            (unsigned int)log->flags);
         race_ram_dump_line_pause();
+        lc_printf("RACE_EVT_YAW seq=%lu idx=%u yaw=%d ypr=%d yd=%d exp=%d herr=%d nav=%d gz100=%d err=%d B=%d A=%d\r\n",
+            (unsigned long)seq++,
+            (unsigned int)i,
+            (int)log->yaw_cdeg,
+            (int)log->yaw_progress_cdeg,
+            (int)log->yaw_delta_cdeg,
+            (int)log->expected_yaw_cdeg,
+            (int)log->heading_error_cdeg,
+            (int)log->nav_turn,
+            (int)log->gzlp_x100_mdps,
+            (int)log->line_error,
+            (int)log->motor_b_total,
+            (int)log->motor_a_total);
+        race_ram_dump_line_pause();
+    }
+    lc_printf("RACE_DUMP_SECTION_END seq=%lu name=EVT\r\n",
+        (unsigned long)seq++);
+    race_ram_dump_section_pause();
+#endif
+
+    lc_printf("RACE_DUMP_MARK seq=%lu step=win_begin\r\n",
+        (unsigned long)seq++);
+    race_ram_dump_line_pause();
+#if RACE_DUMP_WIN_ENABLE
+    {
+#if RACE_DUMP_WIN_STRIDE <= 1
+        uint16_t window_stride = 1U;
+#else
+        uint16_t window_stride = (uint16_t)RACE_DUMP_WIN_STRIDE;
+#endif
+        uint16_t window_dump_count =
+            (uint16_t)((window_count + window_stride - 1U) / window_stride);
+
+        lc_printf("RACE_DUMP_SECTION seq=%lu name=WIN count=%u kept=%u stride=%u\r\n",
+            (unsigned long)seq++,
+            (unsigned int)window_dump_count,
+            (unsigned int)window_count,
+            (unsigned int)window_stride);
+        race_ram_dump_line_pause();
+        for (i = 0U; i < window_count; i++) {
+            const race_window_log_t *log;
+
+            if ((i % window_stride) != 0U) {
+                continue;
+            }
+
+            log = &g_race_window_log[i];
+            lc_printf("RACE_WIN seq=%lu idx=%u lap=%u ph=%u t=%lu dist=%u yaw=%d exp=%d herr=%d err=%d mask=0x%02X cnt=%u fl=0x%02X\r\n",
+                (unsigned long)seq++,
+                (unsigned int)i,
+                (unsigned int)log->lap,
+                (unsigned int)log->phase,
+                (unsigned long)log->t_ms,
+                (unsigned int)log->dist_count,
+                (int)log->yaw_cdeg,
+                (int)log->expected_yaw_cdeg,
+                (int)log->heading_error_cdeg,
+                (int)log->line_error,
+                (unsigned int)log->line_mask,
+                (unsigned int)log->active_count,
+                (unsigned int)log->flags);
+            race_ram_dump_line_pause();
+            lc_printf("RACE_WIN_NAV seq=%lu idx=%u rawy=%d py=%d ypr=%d nav=%d turn=%d gz=%d gzl=%d fd=%u upd=0x%02X\r\n",
+                (unsigned long)seq++,
+                (unsigned int)i,
+                (int)log->yaw_raw_cdeg,
+                (int)log->phase_yaw_cdeg,
+                (int)log->yaw_progress_cdeg,
+                (int)log->nav_turn,
+                (int)log->control_turn,
+                (int)log->gyro_z_x100_mdps,
+                (int)log->gzlp_x100_mdps,
+                (unsigned int)log->nav_frame_delta,
+                (unsigned int)log->nav_update_flags);
+            race_ram_dump_line_pause();
+        }
     }
     lc_printf("RACE_DUMP_SECTION_END seq=%lu name=WIN\r\n",
         (unsigned long)seq++);
     race_ram_dump_section_pause();
+#endif
 
     lc_printf("RACE_RAM_END seq=%lu\r\n", (unsigned long)seq++);
 }

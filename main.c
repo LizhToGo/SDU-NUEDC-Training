@@ -61,18 +61,15 @@ typedef struct {
     int16_t slow_motor_b_pwm;
     int16_t slow_motor_a_pwm;
     int32_t yaw_stop_target_cdeg;
+    uint8_t predictive_stop_enable;
+    int32_t predictive_stop_ms;
+    int32_t predictive_stop_min_gz_mdps;
 } gyro_turn_config_t;
 
 #if RACE_UART_LOG_ENABLE
 #define race_log_printf(...) lc_printf(__VA_ARGS__)
 #else
 #define race_log_printf(...) ((void)0)
-#endif
-
-#if RACE_REALTIME_EVENT_LOG_ENABLE
-#define race_event_printf(...) lc_printf(__VA_ARGS__)
-#else
-#define race_event_printf(...) ((void)0)
 #endif
 
 /**

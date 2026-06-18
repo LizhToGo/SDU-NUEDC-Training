@@ -25,6 +25,34 @@ TIMESTAMP_RE = re.compile(r"^\[[^\]]+\]:\s*")
 KEYVAL_RE = re.compile(r"(\w+)=([^\s]+)")
 CSV_ENCODING = "utf-8-sig"
 
+PHASE_NAMES = {
+    "0": "AC",
+    "1": "CB",
+    "2": "BD",
+    "3": "DA",
+}
+
+EVENT_NAMES = {
+    "1": "start",
+    "2": "point",
+    "3": "force",
+    "4": "advance_start",
+    "5": "advance_stop",
+    "6": "turn_start",
+    "7": "turn_stop",
+    "8": "complete",
+    "9": "segment_start",
+}
+
+REASON_NAMES = {
+    "0": "none",
+    "1": "point",
+    "2": "force",
+    "3": "uart_stop",
+    "5": "nav_invalid",
+    "6": "yaw",
+}
+
 PREFERRED_COLUMNS = [
     "run_id",
     "imported_at",
@@ -36,24 +64,39 @@ PREFERRED_COLUMNS = [
     "seq",
     "idx",
     "name",
+    "step",
     "count",
+    "kept",
+    "stride",
     "lap",
     "seg",
     "phase",
+    "ph",
     "event",
+    "ev",
     "reason",
+    "rsn",
     "t",
+    "t0",
+    "t1",
     "t_start",
     "t_end",
     "dist",
     "phase_dist",
+    "pd",
     "yaw",
+    "yaw0",
+    "yaw1",
     "yaw_start",
     "yaw_end",
     "yaw_raw",
+    "rawy",
     "pyaw",
+    "py",
     "yprog",
+    "ypr",
     "ydelta",
+    "yd",
     "exp",
     "herr",
     "line_turn",
@@ -72,8 +115,15 @@ PREFERRED_COLUMNS = [
     "max_gzlp",
     "avg_line",
     "avg_nav",
+    "seen",
+    "first",
+    "last",
+    "span",
+    "maxlost",
+    "endlost",
     "gz",
     "gz100",
+    "gzl",
     "gzlp",
     "roll",
     "pitch",
@@ -95,11 +145,14 @@ PREFERRED_COLUMNS = [
     "avg_abs_err",
     "max_err",
     "pmask",
+    "pm",
     "pflags",
+    "pf",
     "raw",
     "mask",
     "cnt",
     "flags",
+    "fl",
     "err",
     "B",
     "A",
@@ -110,6 +163,9 @@ PREFERRED_COLUMNS = [
     "sum",
     "sum_ov",
     "max_laps",
+    "log_stride",
+    "laps",
+    "mode",
     "line_base",
     "arc_base",
     "gyro_st",
@@ -135,6 +191,9 @@ PREFERRED_COLUMNS = [
     "b_exit",
     "a_exit",
     "ff_gain",
+    "line_delay",
+    "section_delay",
+    "win_stride",
 ]
 
 RUN_COLUMNS = [
@@ -241,6 +300,59 @@ def split_pair(row: dict[str, str], key: str, left: str, right: str) -> None:
     row[right] = second
 
 
+def split_triple(row: dict[str, str], key: str, first: str, second: str, third: str) -> None:
+    value = row.get(key, "")
+    parts = value.split("/")
+    if len(parts) != 3:
+        return
+    row[first], row[second], row[third] = parts
+
+
+def set_if_missing(row: dict[str, str], key: str, value: str | None) -> None:
+    if value is None or value == "":
+        return
+    if not row.get(key):
+        row[key] = value
+
+
+def normalize_common_fields(row: dict[str, str]) -> None:
+    phase = row.get("phase") or row.get("ph")
+    if phase:
+        set_if_missing(row, "phase", phase)
+        set_if_missing(row, "seg", PHASE_NAMES.get(phase, phase))
+    if row.get("ev"):
+        set_if_missing(row, "event", EVENT_NAMES.get(row["ev"], row["ev"]))
+    if row.get("rsn"):
+        set_if_missing(row, "reason", REASON_NAMES.get(row["rsn"], "timeout"))
+    for short, long in [
+        ("pd", "phase_dist"),
+        ("fl", "flags"),
+        ("ypr", "yprog"),
+        ("yd", "ydelta"),
+        ("rawy", "yaw_raw"),
+        ("py", "pyaw"),
+        ("fd", "nav_fd"),
+        ("gzl", "gzlp"),
+        ("seen", "line_n"),
+        ("first", "line_first"),
+        ("last", "line_last"),
+        ("span", "line_span"),
+        ("gap", "end_gap"),
+        ("maxlost", "lost_streak"),
+        ("endlost", "end_lost"),
+        ("pm", "pmask"),
+        ("pf", "pflags"),
+        ("avgh", "avg_herr"),
+        ("maxh", "max_herr"),
+        ("yaw0", "yaw_start"),
+        ("yaw1", "yaw_end"),
+        ("t0", "t_start"),
+        ("t1", "t_end"),
+    ]:
+        if row.get(short):
+            set_if_missing(row, long, row[short])
+
+
 def records_to_rows(records: Iterable[str]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for record in records:
@@ -251,6 +363,7 @@ def records_to_rows(records: Iterable[str]) -> list[dict[str, str]]:
         row.update(parse_keyvals(record))
         split_pair(row, "t", "t_start", "t_end")
         split_pair(row, "yaw", "yaw_start", "yaw_end")
+        normalize_common_fields(row)
         row["raw_record"] = record
         rows.append(row)
     return rows
@@ -261,6 +374,222 @@ def int_value(row: dict[str, str], key: str, default: int = 0) -> int:
         return int(row.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def combine_raw_records(parts: Iterable[dict[str, str]]) -> str:
+    return " | ".join(row.get("raw_record", "") for row in parts if row.get("raw_record"))
+
+
+def row_index(row: dict[str, str]) -> int:
+    return int_value(row, "idx", 1_000_000)
+
+
+def rows_by_idx(rows: Iterable[dict[str, str]]) -> dict[str, dict[str, str]]:
+    return {row.get("idx", ""): row for row in rows if row.get("idx", "") != ""}
+
+
+def split_pair_to(row: dict[str, str], key: str, left: str, right: str) -> None:
+    value = row.get(key, "")
+    if "/" not in value:
+        return
+    first, second = value.split("/", 1)
+    row[left] = first
+    row[right] = second
+
+
+def build_compatible_cfg_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    old_rows = [dict(row) for row in by_type(rows, "RACE_CFG")]
+    if old_rows:
+        return old_rows
+
+    parts: list[dict[str, str]] = []
+    merged: dict[str, str] = {"record_type": "RACE_CFG"}
+    for record_type in ("RACE_CFG_MAIN", "RACE_CFG_ST", "RACE_CFG_ARC", "RACE_CFG_TURN"):
+        part = next((row for row in rows if row.get("record_type") == record_type), None)
+        if part is None:
+            continue
+        parts.append(part)
+        for key, value in part.items():
+            if key in {"record_type", "raw_record"}:
+                continue
+            if key == "seq" and "seq" in merged:
+                continue
+            merged[key] = value
+
+    if not parts:
+        return []
+    merged["raw_record"] = combine_raw_records(parts)
+    return [merged]
+
+
+def build_compatible_segment_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    old_rows = [dict(row) for row in by_type(rows, "RACE_SUM")]
+    if old_rows:
+        return old_rows
+
+    bases = rows_by_idx(by_type(rows, "RACE_SEG"))
+    lines = rows_by_idx(by_type(rows, "RACE_SEG_LINE"))
+    yaws = rows_by_idx(by_type(rows, "RACE_SEG_YAW"))
+    navs = rows_by_idx(by_type(rows, "RACE_SEG_NAV"))
+    merged_rows: list[dict[str, str]] = []
+
+    for idx, base in sorted(bases.items(), key=lambda item: row_index(item[1])):
+        row = dict(base)
+        row["record_type"] = "RACE_SUM"
+
+        line = lines.get(idx)
+        if line:
+            for src, dst in [
+                ("seen", "line_n"),
+                ("first", "line_first"),
+                ("last", "line_last"),
+                ("span", "line_span"),
+                ("gap", "end_gap"),
+                ("maxlost", "lost_streak"),
+                ("endlost", "end_lost"),
+                ("pm", "pmask"),
+                ("pf", "pflags"),
+                ("lost", "lost"),
+            ]:
+                if line.get(src):
+                    row[dst] = line[src]
+
+        yaw = yaws.get(idx)
+        if yaw:
+            for src, dst in [
+                ("yaw0", "yaw_start"),
+                ("yaw1", "yaw_end"),
+                ("ypr", "yprog"),
+                ("herr", "end_herr"),
+                ("avgh", "avg_herr"),
+                ("maxh", "max_herr"),
+            ]:
+                if yaw.get(src):
+                    row[dst] = yaw[src]
+            split_triple(yaw, "turn", "avg_line", "avg_nav", "avg_turn")
+            for key in ("avg_line", "avg_nav", "avg_turn"):
+                if yaw.get(key):
+                    row[key] = yaw[key]
+
+        nav = navs.get(idx)
+        if nav:
+            for src, dst in [
+                ("nav", "nav_n"),
+                ("lost", "nav_lost"),
+                ("fd", "nav_fd"),
+                ("stale", "nav_stale"),
+                ("upd", "upd"),
+            ]:
+                if nav.get(src):
+                    row[dst] = nav[src]
+            split_pair_to(nav, "gz", "avg_gz", "max_gz")
+            split_pair_to(nav, "gzl", "avg_gzlp", "max_gzlp")
+            split_pair_to(nav, "err", "avg_abs_err", "max_err")
+            for key in ("avg_gz", "max_gz", "avg_gzlp", "max_gzlp", "avg_abs_err", "max_err"):
+                if nav.get(key):
+                    row[key] = nav[key]
+
+        parts = [part for part in (base, line, yaw, nav) if part]
+        row["raw_record"] = combine_raw_records(parts)
+        normalize_common_fields(row)
+        merged_rows.append(row)
+
+    return merged_rows
+
+
+def build_compatible_event_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    old_rows = [
+        dict(row)
+        for row in by_type(rows, "RACE_EVT")
+        if not row.get("ev")
+    ]
+    new_bases = rows_by_idx(row for row in by_type(rows, "RACE_EVT") if row.get("ev"))
+    yaws = rows_by_idx(by_type(rows, "RACE_EVT_YAW"))
+    merged_rows = old_rows
+
+    for idx, base in sorted(new_bases.items(), key=lambda item: row_index(item[1])):
+        row = dict(base)
+        yaw = yaws.get(idx)
+        if yaw:
+            for src, dst in [
+                ("yaw", "yaw"),
+                ("ypr", "yprog"),
+                ("yd", "ydelta"),
+                ("exp", "exp"),
+                ("herr", "herr"),
+                ("nav", "nav_turn"),
+                ("gz100", "gz100"),
+                ("err", "err"),
+                ("B", "B"),
+                ("A", "A"),
+            ]:
+                if yaw.get(src):
+                    row[dst] = yaw[src]
+        row["raw_record"] = combine_raw_records([part for part in (base, yaw) if part])
+        normalize_common_fields(row)
+        merged_rows.append(row)
+
+    return merged_rows
+
+
+def build_compatible_window_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    old_rows = [
+        dict(row)
+        for row in by_type(rows, "RACE_WIN")
+        if not row.get("fl")
+    ]
+    new_bases = rows_by_idx(row for row in by_type(rows, "RACE_WIN") if row.get("fl"))
+    navs = rows_by_idx(by_type(rows, "RACE_WIN_NAV"))
+    merged_rows = old_rows
+
+    for idx, base in sorted(new_bases.items(), key=lambda item: row_index(item[1])):
+        row = dict(base)
+        nav = navs.get(idx)
+        if nav:
+            for src, dst in [
+                ("rawy", "yaw_raw"),
+                ("py", "pyaw"),
+                ("ypr", "yprog"),
+                ("nav", "nav_turn"),
+                ("turn", "turn"),
+                ("gz", "gz"),
+                ("gzl", "gzlp"),
+                ("fd", "nav_fd"),
+                ("upd", "upd"),
+            ]:
+                if nav.get(src):
+                    row[dst] = nav[src]
+        row["raw_record"] = combine_raw_records([part for part in (base, nav) if part])
+        normalize_common_fields(row)
+        merged_rows.append(row)
+
+    return merged_rows
+
+
+def build_analysis_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    fragment_types = {
+        "RACE_CFG_MAIN",
+        "RACE_CFG_ST",
+        "RACE_CFG_ARC",
+        "RACE_CFG_TURN",
+        "RACE_SEG",
+        "RACE_SEG_LINE",
+        "RACE_SEG_YAW",
+        "RACE_SEG_NAV",
+        "RACE_EVT_YAW",
+        "RACE_WIN_NAV",
+    }
+    analysis_rows = [
+        dict(row)
+        for row in rows
+        if row.get("record_type") not in fragment_types
+        and row.get("record_type") not in {"RACE_CFG", "RACE_SUM", "RACE_EVT", "RACE_WIN"}
+    ]
+    analysis_rows.extend(build_compatible_cfg_rows(rows))
+    analysis_rows.extend(build_compatible_segment_rows(rows))
+    analysis_rows.extend(build_compatible_event_rows(rows))
+    analysis_rows.extend(build_compatible_window_rows(rows))
+    return analysis_rows
 
 
 def first_slash_int(value: str | None) -> int | None:
@@ -298,15 +627,18 @@ def by_type(rows: list[dict[str, str]], record_type: str) -> list[dict[str, str]
     return [row for row in rows if row.get("record_type") == record_type]
 
 
-def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
+def build_validation(
+    rows: list[dict[str, str]],
+    analysis_rows: list[dict[str, str]],
+) -> tuple[list[str], bool]:
     lines: list[str] = []
     ok = True
 
     begin_rows = by_type(rows, "RACE_RAM_BEGIN")
-    cfg_rows = by_type(rows, "RACE_CFG")
-    event_rows = by_type(rows, "RACE_EVT")
-    sum_rows = by_type(rows, "RACE_SUM")
-    win_rows = by_type(rows, "RACE_WIN")
+    cfg_rows = by_type(analysis_rows, "RACE_CFG")
+    event_rows = by_type(analysis_rows, "RACE_EVT")
+    sum_rows = by_type(analysis_rows, "RACE_SUM")
+    win_rows = by_type(analysis_rows, "RACE_WIN")
     end_rows = by_type(rows, "RACE_RAM_END")
     section_rows = by_type(rows, "RACE_DUMP_SECTION")
     section_end_rows = by_type(rows, "RACE_DUMP_SECTION_END")
@@ -324,7 +656,7 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
         ok = ok and is_ok
 
     begin = begin_rows[0] if begin_rows else {}
-    expected_counts = {
+    begin_counts = {
         "EVT": first_slash_int(begin.get("ev")),
         "SUM": first_slash_int(begin.get("sum")),
         "WIN": first_slash_int(begin.get("win")),
@@ -335,14 +667,14 @@ def build_validation(rows: list[dict[str, str]]) -> tuple[list[str], bool]:
         "WIN": len(win_rows),
     }
     for name in ("EVT", "SUM", "WIN"):
-        expected = expected_counts[name]
         actual = actual_counts[name]
         section_count = next(
             (int_value(row, "count") for row in section_rows if row.get("name") == name),
             None,
         )
+        expected = section_count if section_count is not None else begin_counts[name]
         ended = any(row.get("name") == name for row in section_end_rows)
-        name_ok = expected == actual and section_count == actual and ended
+        name_ok = (expected is None or expected == actual) and ended
         ok = ok and name_ok
         lines.append(
             f"{name}: expected={expected} section={section_count} "
@@ -698,27 +1030,27 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "-o",
         "--output",
-        default="data/task11_experience_data.csv",
-        help="Cumulative raw-record CSV path. Default: data/task11_experience_data.csv",
+        default="data/race_experience_data.csv",
+        help="Cumulative raw-record CSV path. Default: data/race_experience_data.csv",
     )
     parser.add_argument(
         "--runs-output",
-        default="data/task11_experience_runs.csv",
+        default="data/race_experience_runs.csv",
         help="Cumulative one-row-per-run summary CSV.",
     )
     parser.add_argument(
         "--segments-output",
-        default="data/task11_experience_segments.csv",
-        help="Cumulative RACE_SUM segment CSV.",
+        default="data/race_experience_segments.csv",
+        help="Cumulative merged segment CSV.",
     )
     parser.add_argument(
         "--turns-output",
-        default="data/task11_experience_turns.csv",
+        default="data/race_experience_turns.csv",
         help="Cumulative turn-start/turn-stop summary CSV.",
     )
     parser.add_argument(
         "--summary",
-        default="data/task11_experience_summary.txt",
+        default="data/race_experience_summary.txt",
         help="Cumulative human-readable summary log.",
     )
     parser.add_argument(
@@ -767,7 +1099,8 @@ def main(argv: list[str]) -> int:
 
     records = rebuild_race_records(text)
     rows = records_to_rows(records)
-    summary_lines, validation_ok = build_validation(rows)
+    analysis_rows = build_analysis_rows(rows)
+    summary_lines, validation_ok = build_validation(rows, analysis_rows)
     digest = log_hash(records)
     run_id = args.run_id or f"race_{digest}"
     metadata = {
@@ -793,9 +1126,9 @@ def main(argv: list[str]) -> int:
         return 0
 
     record_rows = add_metadata(rows, metadata)
-    run_rows = [build_run_summary_row(rows, metadata, validation_ok)]
-    segment_rows = add_metadata(by_type(rows, "RACE_SUM"), metadata)
-    turn_rows = build_turn_rows(rows, metadata)
+    run_rows = [build_run_summary_row(analysis_rows, metadata, validation_ok)]
+    segment_rows = add_metadata(by_type(analysis_rows, "RACE_SUM"), metadata)
+    turn_rows = build_turn_rows(analysis_rows, metadata)
 
     try:
         append_csv_rows(record_rows, output_path, PREFERRED_COLUMNS, replace=args.replace)
