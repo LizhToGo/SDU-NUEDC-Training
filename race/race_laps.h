@@ -226,6 +226,10 @@ static void run_race_laps(uint8_t target_laps)
     race_phase_config_t phase_config;
 
     race_init_lap_context(&ctx, target_laps);
+    if (ctx.stop_reason != 0U) {
+        race_finish_lap_context(&ctx);
+        return;
+    }
 
     while ((ctx.elapsed_ms < RACE_TOTAL_MAX_RUN_MS) &&
         (ctx.lap_count < ctx.target_laps)) {

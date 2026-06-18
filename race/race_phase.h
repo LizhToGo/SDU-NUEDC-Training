@@ -912,11 +912,79 @@ static void race_log_periodic_data(race_context_t *ctx,
 }
 
 /**
+ * @brief Start action: AB is zero, turn right to the configured AC heading.
+ */
+static uint8_t race_align_start_to_ac(const char *tag,
+    int16_t motor_b_pwm,
+    int16_t motor_a_pwm,
+    int16_t slow_motor_b_pwm,
+    int16_t slow_motor_a_pwm,
+    int32_t ac_target_cdeg,
+    int32_t bd_target_cdeg)
+{
+    const gyro_turn_config_t turn_config = {
+        .tag = tag,
+        .motor_b_pwm = motor_b_pwm,
+        .motor_a_pwm = motor_a_pwm,
+        .slow_motor_b_pwm = slow_motor_b_pwm,
+        .slow_motor_a_pwm = slow_motor_a_pwm,
+        .yaw_stop_target_cdeg = ac_target_cdeg
+    };
+
+    race_log_printf("%s_ALIGN target=%ld bd_target=%ld\r\n",
+        tag,
+        (long)ac_target_cdeg,
+        (long)bd_target_cdeg);
+    return race_gyro_turn_to_yaw(&turn_config);
+}
+
+/**
+ * @brief Task3-only start action using its own tunable parameters.
+ */
+static uint8_t race_task3_align_start_to_ac(void)
+{
+#if RACE_TASK3_START_ALIGN_ENABLE
+    return race_align_start_to_ac("RACE_TASK3_START_TO_AC",
+        RACE_TASK3_START_RIGHT_TURN_B_PWM,
+        RACE_TASK3_START_RIGHT_TURN_A_PWM,
+        RACE_TASK3_START_RIGHT_TURN_SLOW_B_PWM,
+        RACE_TASK3_START_RIGHT_TURN_SLOW_A_PWM,
+        RACE_TASK3_AC_HEADING_TARGET_CDEG,
+        RACE_TASK3_BD_HEADING_TARGET_CDEG);
+#else
+    return 1U;
+#endif
+}
+
+/**
+ * @brief Task4-only start action using its own tunable parameters.
+ */
+static uint8_t race_task4_align_start_to_ac(void)
+{
+#if RACE_TASK4_START_ALIGN_ENABLE
+    return race_align_start_to_ac("RACE_TASK4_START_TO_AC",
+        RACE_TASK4_START_RIGHT_TURN_B_PWM,
+        RACE_TASK4_START_RIGHT_TURN_A_PWM,
+        RACE_TASK4_START_RIGHT_TURN_SLOW_B_PWM,
+        RACE_TASK4_START_RIGHT_TURN_SLOW_A_PWM,
+        RACE_TASK4_AC_HEADING_TARGET_CDEG,
+        RACE_TASK4_BD_HEADING_TARGET_CDEG);
+#else
+    return 1U;
+#endif
+}
+
+/**
  * @brief Initialize the race context before Task3/Task4 starts.
  */
 static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
 {
+    uint8_t task3_mode;
+    uint8_t task4_mode;
+
     ctx->target_laps = (target_laps == 0U) ? 1U : target_laps;
+    task3_mode = (ctx->target_laps == 1U) ? 1U : 0U;
+    task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
 
     TB6612_Brake();
     delay_ms_with_st011(RACE_POINT_SETTLE_MS);
@@ -931,8 +999,21 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
         }
     }
 #else
-    (void)jy62_zero_to_current("RACE_AC_ZERO", 0U);
+    (void)jy62_zero_to_current(
+        (task4_mode != 0U) ? "RACE_TASK4_AB_ZERO" :
+            ((task3_mode != 0U) ? "RACE_TASK3_AB_ZERO" : "RACE_AC_ZERO"),
+        0U);
 #endif
+    if ((task3_mode != 0U) || (task4_mode != 0U)) {
+        delay_ms_with_st011(RACE_POINT_SETTLE_MS);
+        uint8_t align_ok = (task4_mode != 0U) ?
+            race_task4_align_start_to_ac() : race_task3_align_start_to_ac();
+
+        if (align_ok == 0U) {
+            ctx->stop_reason = 2U;
+            return;
+        }
+    }
     delay_ms_with_st011(RACE_POINT_SETTLE_MS);
     IRTracking_Init();
     encoder_reset_distance_counts();
@@ -973,7 +1054,6 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
         ctx->gyro_z_filtered_mdps);
 
     {
-        uint8_t task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
         int32_t ac_target_cdeg = task4_mode ?
             RACE_TASK4_AC_HEADING_TARGET_CDEG :
             RACE_AC_HEADING_TARGET_CDEG;
