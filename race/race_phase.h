@@ -73,7 +73,8 @@ static void race_configure_phase(const race_context_t *ctx,
         config->arc_mode = 0U;
         config->phase_turn_dir = 0;
         config->straight_target_cdeg = task4_mode ?
-            RACE_TASK4_AC_HEADING_TARGET_CDEG : RACE_AC_HEADING_TARGET_CDEG;
+            RACE_TASK4_AC_HEADING_TARGET_CDEG :
+            RACE_TASK3_AC_HEADING_TARGET_CDEG;
         config->point_arm_count = RACE_AC_POINT_ARM_COUNT;
         config->force_count = RACE_STRAIGHT_FORCE_COUNT;
     } else if (ctx->phase == 1U) {
@@ -92,7 +93,8 @@ static void race_configure_phase(const race_context_t *ctx,
         config->arc_mode = 0U;
         config->phase_turn_dir = 0;
         config->straight_target_cdeg = task4_mode ?
-            RACE_TASK4_BD_HEADING_TARGET_CDEG : RACE_BD_HEADING_TARGET_CDEG;
+            RACE_TASK4_BD_HEADING_TARGET_CDEG :
+            RACE_TASK3_BD_HEADING_TARGET_CDEG;
         config->point_arm_count = RACE_BD_POINT_ARM_COUNT;
         config->force_count = RACE_STRAIGHT_FORCE_COUNT;
     } else {
@@ -379,9 +381,11 @@ static uint8_t race_check_straight_force_turn(const race_context_t *ctx,
         return 0U;
     }
     if (ctx->phase == 0U) {
-        int32_t force_count = RACE_AC_FORCE_TURN_COUNT;
+        uint8_t task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
+        int32_t force_count = task4_mode ? RACE_TASK4_AC_FORCE_TURN_COUNT :
+            RACE_TASK3_AC_FORCE_TURN_COUNT;
 
-        if (ctx->lap_count == 0U) {
+        if ((task4_mode != 0U) && (ctx->lap_count == 0U)) {
             force_count = RACE_TASK4_FIRST_AC_FORCE_TURN_COUNT;
         }
 
@@ -633,7 +637,7 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
         uint8_t task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
         int32_t target_cdeg = task4_mode ?
             RACE_TASK4_BD_HEADING_TARGET_CDEG :
-            RACE_BD_HEADING_TARGET_CDEG;
+            RACE_TASK3_BD_HEADING_TARGET_CDEG;
         const gyro_turn_config_t turn_config = {
             .tag = "RACE_B_GYRO_TO_BD",
             .motor_b_pwm = RACE_EXIT_LEFT_TURN_B_PWM,
@@ -1056,10 +1060,10 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
     {
         int32_t ac_target_cdeg = task4_mode ?
             RACE_TASK4_AC_HEADING_TARGET_CDEG :
-            RACE_AC_HEADING_TARGET_CDEG;
+            RACE_TASK3_AC_HEADING_TARGET_CDEG;
         int32_t bd_target_cdeg = task4_mode ?
             RACE_TASK4_BD_HEADING_TARGET_CDEG :
-            RACE_BD_HEADING_TARGET_CDEG;
+            RACE_TASK3_BD_HEADING_TARGET_CDEG;
 
         race_log_printf("RACE start: ac_zero_collect laps=%u yaw=%ld nav=%u nav_fd=%lu upd=0x%02X base=%d arc_base=%d ac_tgt=%ld bd_tgt=%ld gyro_to=%d cb_diff=%d/%d da_diff=%d/%d ff_gain=%d gyro_st=%u arc_yaw=%u yaw_stop=%u b_exit=%ld a_exit=%ld report=%d\r\n",
             ctx->target_laps,

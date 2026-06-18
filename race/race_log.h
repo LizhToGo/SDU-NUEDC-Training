@@ -658,11 +658,11 @@ static int32_t race_phase_start_expected_yaw_cdeg(uint8_t phase,
 
     if (phase == 0U) {
         return task4_mode ? RACE_TASK4_AC_HEADING_TARGET_CDEG :
-            RACE_AC_HEADING_TARGET_CDEG;
+            RACE_TASK3_AC_HEADING_TARGET_CDEG;
     }
     if (phase == 2U) {
         return task4_mode ? RACE_TASK4_BD_HEADING_TARGET_CDEG :
-            RACE_BD_HEADING_TARGET_CDEG;
+            RACE_TASK3_BD_HEADING_TARGET_CDEG;
     }
     return 0;
 }
@@ -753,9 +753,11 @@ static void race_ram_log_dump(uint8_t target_laps)
     uint16_t summary_overflow = g_race_summary_log_overflow;
     uint8_t task4_mode = (target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
     int32_t ac_target_cdeg = task4_mode ?
-        RACE_TASK4_AC_HEADING_TARGET_CDEG : RACE_AC_HEADING_TARGET_CDEG;
+        RACE_TASK4_AC_HEADING_TARGET_CDEG :
+        RACE_TASK3_AC_HEADING_TARGET_CDEG;
     int32_t bd_target_cdeg = task4_mode ?
-        RACE_TASK4_BD_HEADING_TARGET_CDEG : RACE_BD_HEADING_TARGET_CDEG;
+        RACE_TASK4_BD_HEADING_TARGET_CDEG :
+        RACE_TASK3_BD_HEADING_TARGET_CDEG;
 
     if (window_count > RACE_RAM_WINDOW_CAPACITY) {
         window_overflow++;
