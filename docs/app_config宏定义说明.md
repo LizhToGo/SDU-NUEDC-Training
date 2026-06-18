@@ -415,6 +415,7 @@
 | `RACE_LINE_BASE_PWM` | 直线基础 PWM | 560 |
 | `RACE_LINE_MIN_PWM` | 最小 PWM | 0 |
 | `RACE_LINE_MAX_PWM` | 最大 PWM | 760 |
+| `RACE_TASK4_LINE_MAX_PWM` | 任务四直线最大 PWM | 900 |
 | `RACE_LINE_TURN_DIVISOR` | 转向除数 | 9 |
 | `RACE_LINE_KD_DIVISOR` | 微分除数 | 7 |
 | `RACE_LINE_DERIV_LIMIT` | 微分限幅 | 700 |
@@ -429,6 +430,10 @@
 |----|------|--------|
 | `RACE_STRAIGHT_BASE_PWM` | 直线基础 PWM | 600 |
 | `RACE_STRAIGHT_TARGET_DIFF` | 目标速度差 | 0 |
+| `RACE_TASK4_STRAIGHT_BASE_PWM` | 任务四直线基础 PWM | 840 |
+| `RACE_TASK4_STRAIGHT_TARGET_DIFF` | 任务四直线目标速度差 | 0 |
+| `RACE_TASK4_ENTRY_DECEL_START_COUNT` | 任务四入弯前减速起点 | RACE_AC_POINT_ARM_COUNT - 500 |
+| `RACE_TASK4_ENTRY_DECEL_RAMP_COUNT` | 任务四入弯前减速距离 | 350 |
 | `RACE_STRAIGHT_GYRO_NAV_ENABLE` | 陀螺仪导航使能 | 1 |
 | `RACE_STRAIGHT_IR_ASSIST_ENABLE` | 红外辅助使能 | 0 |
 | `RACE_STRAIGHT_IR_ASSIST_DIVISOR` | 红外辅助除数 | 3 |
@@ -441,6 +446,7 @@
 | 宏 | 说明 | 默认值 |
 |----|------|--------|
 | `RACE_ARC_BASE_PWM` | 弧线基础 PWM | 540 |
+| `RACE_TASK4_ARC_BASE_PWM` | 任务四弧线基础 PWM | 670 |
 | `RACE_CB_ARC_ENTRY_TARGET_DIFF` | CB 入口目标差 | -48 |
 | `RACE_CB_ARC_CRUISE_TARGET_DIFF` | CB 巡航目标差 | -48 |
 | `RACE_DA_ARC_ENTRY_TARGET_DIFF` | DA 入口目标差 | 46 |
@@ -449,6 +455,8 @@
 | `RACE_ARC_YAW_CORR_DIVISOR` | 弧线航向修正除数 | 260 |
 | `RACE_ARC_YAW_CORR_MAX` | 弧线航向修正最大值 | 45 |
 | `RACE_ARC_GYRO_DAMP_DIVISOR` | 弧线陀螺仪阻尼除数 | 4400 |
+| `RACE_TASK4_EXIT_DECEL_START_COUNT` | 任务四出弯前减速起点 | TASK3_ARC_LENGTH_COUNT - 2300 |
+| `RACE_TASK4_EXIT_DECEL_RAMP_COUNT` | 任务四出弯前减速距离 | 350 |
 
 ### 19.6 差速参数
 
@@ -502,13 +510,18 @@
 | `RACE_TURN_YAW_STOP_TOL_CDEG` | 航向停止容差 | 260 |
 | `RACE_TURN_YAW_SLOW_ZONE_CDEG` | 航向慢速区域 | 900 |
 | `RACE_TURN_YAW_STOP_GZLP_TOL_MDPS` | 航向停止角速度容差 | 14000 |
+| `RACE_TASK4_EXIT_TURN_PREDICT_ENABLE` | 任务四出弯预测停止 | 1 |
+| `RACE_TASK4_EXIT_TURN_PREDICT_MS` | 任务四出弯预测时间 | 40 ms |
+| `RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS` | 任务四预测停止最小角速度 | = RACE_TURN_YAW_STOP_GZLP_TOL_MDPS |
 
 ### 19.10 竞速航向参数
 
 | 宏 | 说明 | 默认值 |
 |----|------|--------|
-| `RACE_AC_HEADING_TARGET_CDEG` | AC 航向目标 | -50 |
-| `RACE_BD_HEADING_TARGET_CDEG` | BD 航向目标 | -10638 |
+| `RACE_TASK3_AC_HEADING_TARGET_CDEG` | 任务三 AC 航向目标 | -3300 |
+| `RACE_TASK3_BD_HEADING_TARGET_CDEG` | 任务三 BD 航向目标 | -18000 + 3850 |
+| `RACE_TASK4_AC_HEADING_TARGET_CDEG` | 任务四 AC 航向目标 | -3300 |
+| `RACE_TASK4_BD_HEADING_TARGET_CDEG` | 任务四 BD 航向目标 | -18000 + 3800 |
 | `RACE_TURN_CENTER6_ERROR_MAX` | 中心 6 路最大误差 | 1500 |
 | `RACE_POINT_ADVANCE_COUNT` | 点位前进距离 | 300 |
 | `RACE_ARC_POINT_ADVANCE_COUNT` | 弧线点位前进距离 | 800 |
@@ -516,6 +529,15 @@
 | `RACE_POINT_ADVANCE_TIMEOUT_MS` | 点位前进超时 | 800 ms |
 | `RACE_AC_POINT_ARM_COUNT` | AC 点位使能距离 | 7300 |
 | `RACE_BD_POINT_ARM_COUNT` | BD 点位使能距离 | 7300 |
+| `RACE_TASK4_BD_POINT_ARM_COUNT` | 任务四 BD 点位使能距离 | 6600 |
+| `RACE_TASK3_AC_FORCE_TURN_COUNT` | 任务三 AC 强制入弯距离 | 7750 |
+| `RACE_TASK4_AC_FORCE_TURN_COUNT` | 任务四 AC 强制入弯距离 | 7520 |
+| `RACE_TASK4_FIRST_AC_FORCE_TURN_COUNT` | 任务四第一圈 AC 强制入弯距离 | 7800 |
+| `RACE_BD_FORCE_TURN_COUNT` | BD 强制入弯距离 | 7400 |
+| `RACE_TASK4_BD_FORCE_TURN_COUNT` | 任务四 BD 强制入弯距离 | 7200 |
+| `RACE_FORCE_ENTRY_TURN_CDEG` | 强制入弯转向角 | 3000 |
+| `RACE_FORCE_FIND_LINE_COUNT` | 强制转向后找线距离 | 1800 |
+| `RACE_FORCE_FIND_LINE_TIMEOUT_MS` | 强制转向后找线超时 | 1200 ms |
 | `RACE_STRAIGHT_FORCE_COUNT` | 直线强制停止距离 | 12800 |
 | `RACE_STRAIGHT_POINT_CONFIRM_COUNT` | 直线点位确认次数 | 1 |
 | `RACE_ARC_POINT_YAW_ARM_CDEG` | 弧线点位航向使能 | 14000 |
