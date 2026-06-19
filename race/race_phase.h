@@ -190,6 +190,31 @@ static int32_t race_task4_decel_base_pwm(int32_t fast_base_pwm,
 }
 
 /**
+ * @brief Ramp Task4's first AC launch from a gentler start to full speed.
+ */
+static int32_t race_task4_first_ac_ramp_base_pwm(int32_t full_base_pwm,
+    int32_t phase_distance_count)
+{
+    int32_t ramp_count = RACE_TASK4_FIRST_AC_RAMP_COUNT;
+    int32_t start_base_pwm = RACE_TASK4_FIRST_AC_RAMP_START_PWM;
+    int32_t pwm_gain;
+
+    if ((ramp_count <= 0) || (full_base_pwm <= start_base_pwm)) {
+        return full_base_pwm;
+    }
+    if (phase_distance_count <= 0) {
+        return start_base_pwm;
+    }
+    if (phase_distance_count >= ramp_count) {
+        return full_base_pwm;
+    }
+
+    pwm_gain = ((full_base_pwm - start_base_pwm) * phase_distance_count) /
+        ramp_count;
+    return start_base_pwm + pwm_gain;
+}
+
+/**
  * @brief Calculate line turn, yaw turn, wheel-speed PID, and final PWM values.
  */
 static void race_compute_loop_control(race_context_t *ctx,
@@ -230,6 +255,11 @@ static void race_compute_loop_control(race_context_t *ctx,
     } else {
         if (task4_mode != 0U) {
             ctx->base_pwm = RACE_TASK4_STRAIGHT_BASE_PWM;
+            if ((ctx->lap_count == 0U) && (ctx->phase == 0U)) {
+                ctx->base_pwm = race_task4_first_ac_ramp_base_pwm(
+                    ctx->base_pwm,
+                    ctx->phase_distance_count);
+            }
             ctx->base_pwm = race_task4_decel_base_pwm(ctx->base_pwm,
                 RACE_STRAIGHT_BASE_PWM,
                 ctx->phase_distance_count,
@@ -450,6 +480,8 @@ static void race_log_loop_samples(race_context_t *ctx,
             ctx->heading_error_cdeg,
             ctx->nav_turn,
             ctx->control_turn,
+            ctx->left_pwm,
+            ctx->right_pwm,
             ctx->gyro_z_mdps,
             ctx->gyro_z_filtered_mdps,
             ctx->roll_cdeg,
@@ -565,7 +597,9 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
             .predictive_stop_ms = task4_mode ?
                 RACE_TASK4_EXIT_TURN_PREDICT_MS : 0,
             .predictive_stop_min_gz_mdps = task4_mode ?
-                RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS : 0
+                RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS : 0,
+            .control_period_ms = task4_mode ?
+                RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
         };
         turn_success = task4_mode ?
             race_advance_after_point_with_heading("RACE_B_ADVANCE",
@@ -611,7 +645,8 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
             .predictive_stop_enable = RACE_TASK4_EXIT_TURN_PREDICT_ENABLE,
             .predictive_stop_ms = RACE_TASK4_EXIT_TURN_PREDICT_MS,
             .predictive_stop_min_gz_mdps =
-                RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS
+                RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS,
+            .control_period_ms = RACE_TASK4_CONTROL_PERIOD_MS
         };
         turn_success = race_advance_after_point_with_heading("RACE_A_ADVANCE",
             RACE_ARC_POINT_ADVANCE_COUNT,
@@ -655,7 +690,9 @@ static uint8_t race_execute_straight_force_turn_action(const race_context_t *ctx
                 RACE_TASK4_FORCE_LEFT_TURN_SLOW_B_PWM : RACE_LEFT_TURN_SLOW_B_PWM,
             .slow_motor_a_pwm = task4_mode ?
                 RACE_TASK4_FORCE_LEFT_TURN_SLOW_A_PWM : RACE_LEFT_TURN_SLOW_A_PWM,
-            .yaw_stop_target_cdeg = target_cdeg
+            .yaw_stop_target_cdeg = target_cdeg,
+            .control_period_ms = task4_mode ?
+                RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
         };
 
         turn_success = race_gyro_turn_to_yaw(&turn_config);
@@ -681,7 +718,9 @@ static uint8_t race_execute_straight_force_turn_action(const race_context_t *ctx
                     RACE_TASK4_FORCE_RIGHT_TURN_SLOW_B_PWM : RACE_RIGHT_TURN_SLOW_B_PWM,
                 .slow_motor_a_pwm = task4_mode ?
                     RACE_TASK4_FORCE_RIGHT_TURN_SLOW_A_PWM : RACE_RIGHT_TURN_SLOW_A_PWM,
-                .yaw_stop_target_cdeg = target_cdeg
+                .yaw_stop_target_cdeg = target_cdeg,
+                .control_period_ms = task4_mode ?
+                    RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
             };
 
             turn_success = race_gyro_turn_to_yaw(&turn_config);
@@ -770,7 +809,8 @@ static uint8_t race_align_start_to_ac(const char *tag,
     int16_t slow_motor_b_pwm,
     int16_t slow_motor_a_pwm,
     int32_t ac_target_cdeg,
-    int32_t bd_target_cdeg)
+    int32_t bd_target_cdeg,
+    uint8_t predictive_stop_enable)
 {
     const gyro_turn_config_t turn_config = {
         .tag = tag,
@@ -778,7 +818,14 @@ static uint8_t race_align_start_to_ac(const char *tag,
         .motor_a_pwm = motor_a_pwm,
         .slow_motor_b_pwm = slow_motor_b_pwm,
         .slow_motor_a_pwm = slow_motor_a_pwm,
-        .yaw_stop_target_cdeg = ac_target_cdeg
+        .yaw_stop_target_cdeg = ac_target_cdeg,
+        .predictive_stop_enable = predictive_stop_enable,
+        .predictive_stop_ms = (predictive_stop_enable != 0U) ?
+            RACE_TASK4_EXIT_TURN_PREDICT_MS : 0,
+        .predictive_stop_min_gz_mdps = (predictive_stop_enable != 0U) ?
+            RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS : 0,
+        .control_period_ms = (predictive_stop_enable != 0U) ?
+            RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
     };
 
     race_log_printf("%s_ALIGN target=%ld bd_target=%ld\r\n",
@@ -800,7 +847,8 @@ static uint8_t race_task3_align_start_to_ac(void)
         RACE_TASK3_START_RIGHT_TURN_SLOW_B_PWM,
         RACE_TASK3_START_RIGHT_TURN_SLOW_A_PWM,
         RACE_TASK3_AC_HEADING_TARGET_CDEG,
-        RACE_TASK3_BD_HEADING_TARGET_CDEG);
+        RACE_TASK3_BD_HEADING_TARGET_CDEG,
+        0U);
 #else
     return 1U;
 #endif
@@ -818,7 +866,8 @@ static uint8_t race_task4_align_start_to_ac(void)
         RACE_TASK4_START_RIGHT_TURN_SLOW_B_PWM,
         RACE_TASK4_START_RIGHT_TURN_SLOW_A_PWM,
         RACE_TASK4_AC_HEADING_TARGET_CDEG,
-        RACE_TASK4_BD_HEADING_TARGET_CDEG);
+        RACE_TASK4_BD_HEADING_TARGET_CDEG,
+        RACE_TASK4_EXIT_TURN_PREDICT_ENABLE);
 #else
     return 1U;
 #endif

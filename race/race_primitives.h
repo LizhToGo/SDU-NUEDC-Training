@@ -70,7 +70,8 @@ static void race_drive_config(straight_drive_config_t *config,
     config->distance_corr_max = 0;
     config->correction_max = RACE_DIFF_CORR_MAX;
     config->min_pwm = RACE_LINE_MIN_PWM;
-    config->max_pwm = RACE_LINE_MAX_PWM;
+    config->max_pwm = (base_pwm > RACE_LINE_MAX_PWM) ?
+        RACE_TASK4_LINE_MAX_PWM : RACE_LINE_MAX_PWM;
 }
 
 /**
@@ -572,6 +573,8 @@ static uint8_t race_gyro_turn_to_yaw(
     uint8_t yaw_error_valid = 0U;
     uint8_t yaw_cross_ready = 0U;
     uint8_t predictive_stop_ready = 0U;
+    uint32_t control_period_ms = (config->control_period_ms != 0U) ?
+        config->control_period_ms : CONTROL_PERIOD_MS;
 
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
@@ -623,9 +626,9 @@ static uint8_t race_gyro_turn_to_yaw(
         RACE_GYRO_TURN_TIMEOUT_MS);
 
     while (elapsed_ms < RACE_GYRO_TURN_TIMEOUT_MS) {
-        delay_ms_with_st011(CONTROL_PERIOD_MS);
-        elapsed_ms += CONTROL_PERIOD_MS;
-        report_elapsed_ms += CONTROL_PERIOD_MS;
+        delay_ms_with_st011(control_period_ms);
+        elapsed_ms += control_period_ms;
+        report_elapsed_ms += control_period_ms;
 
         if (task_uart_stop_requested() != 0U) {
             stop_reason = 3U;

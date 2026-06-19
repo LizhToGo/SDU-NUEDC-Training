@@ -64,6 +64,7 @@ typedef struct {
     uint8_t predictive_stop_enable;
     int32_t predictive_stop_ms;
     int32_t predictive_stop_min_gz_mdps;
+    uint32_t control_period_ms;
 } gyro_turn_config_t;
 
 #if RACE_UART_LOG_ENABLE

@@ -156,6 +156,7 @@ PREFERRED_COLUMNS = [
     "err",
     "B",
     "A",
+    "pwm",
     "win",
     "win_ov",
     "ev",

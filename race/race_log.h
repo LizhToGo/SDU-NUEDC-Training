@@ -65,6 +65,8 @@ typedef struct {
     int16_t line_error;
     int16_t nav_turn;
     int16_t control_turn;
+    int16_t motor_b_pwm;
+    int16_t motor_a_pwm;
     int16_t gyro_z_x100_mdps;
     int16_t gzlp_x100_mdps;
     int16_t roll_cdeg;
@@ -563,6 +565,8 @@ static void race_ram_log_window_sample(uint8_t lap,
     int32_t heading_error_cdeg,
     int32_t nav_turn,
     int32_t control_turn,
+    int32_t motor_b_pwm,
+    int32_t motor_a_pwm,
     int32_t gyro_z_mdps,
     int32_t gyro_z_filtered_mdps,
     int32_t roll_cdeg,
@@ -596,6 +600,8 @@ static void race_ram_log_window_sample(uint8_t lap,
     log->line_error = race_sat_i16((ir_ok != 0U) ? sample->error : 0);
     log->nav_turn = race_sat_i16(nav_turn);
     log->control_turn = race_sat_i16(control_turn);
+    log->motor_b_pwm = race_sat_i16(motor_b_pwm);
+    log->motor_a_pwm = race_sat_i16(motor_a_pwm);
     log->gyro_z_x100_mdps = race_sat_i16(gyro_z_mdps / 100);
     log->gzlp_x100_mdps = race_sat_i16(gyro_z_filtered_mdps / 100);
     log->roll_cdeg = race_sat_i16(roll_cdeg);
@@ -1005,7 +1011,7 @@ static void race_ram_log_dump(uint8_t target_laps)
             }
 
             log = &g_race_window_log[i];
-            lc_printf("RACE_WIN seq=%lu idx=%u lap=%u ph=%u t=%lu dist=%u yaw=%d exp=%d herr=%d err=%d mask=0x%02X cnt=%u fl=0x%02X\r\n",
+            lc_printf("RACE_WIN seq=%lu idx=%u lap=%u ph=%u t=%lu dist=%u yaw=%d exp=%d herr=%d err=%d mask=0x%02X cnt=%u fl=0x%02X pwm=%d/%d\r\n",
                 (unsigned long)seq++,
                 (unsigned int)i,
                 (unsigned int)log->lap,
@@ -1018,7 +1024,9 @@ static void race_ram_log_dump(uint8_t target_laps)
                 (int)log->line_error,
                 (unsigned int)log->line_mask,
                 (unsigned int)log->active_count,
-                (unsigned int)log->flags);
+                (unsigned int)log->flags,
+                (int)log->motor_b_pwm,
+                (int)log->motor_a_pwm);
             race_ram_dump_line_pause();
             lc_printf("RACE_WIN_NAV seq=%lu idx=%u rawy=%d py=%d ypr=%d nav=%d turn=%d gz=%d gzl=%d fd=%u upd=0x%02X\r\n",
                 (unsigned long)seq++,
@@ -1051,7 +1059,7 @@ static void race_ram_log_dump(uint8_t target_laps)
 #define race_ram_log_segment_sample(ir_ok, nav_ok, sample, phase_distance_count, line_turn, nav_turn, control_turn, heading_error_cdeg, gyro_z_mdps, gyro_z_filtered_mdps, nav_frame_delta, nav_update_flags) ((void)0)
 #define race_ram_log_segment_finish(reason, end_ms, dist_count, yaw_end_cdeg, yaw_progress_cdeg, heading_error_cdeg, ir_ok, sample, point_flags) ((void)0)
 #define race_ram_window_should_log(lap, phase_distance_count, point_arm_count) (0U)
-#define race_ram_log_window_sample(lap, phase, ir_ok, sample, edge_seen, extra_flags, elapsed_ms, phase_distance_count, yaw_cdeg, yaw_raw_cdeg, phase_yaw_cdeg, yaw_progress_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, control_turn, gyro_z_mdps, gyro_z_filtered_mdps, roll_cdeg, pitch_cdeg, nav_frame_delta, nav_update_flags) ((void)0)
+#define race_ram_log_window_sample(lap, phase, ir_ok, sample, edge_seen, extra_flags, elapsed_ms, phase_distance_count, yaw_cdeg, yaw_raw_cdeg, phase_yaw_cdeg, yaw_progress_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, control_turn, motor_b_pwm, motor_a_pwm, gyro_z_mdps, gyro_z_filtered_mdps, roll_cdeg, pitch_cdeg, nav_frame_delta, nav_update_flags) ((void)0)
 #define race_ram_log_event(event, reason, lap, phase, extra_flags, elapsed_ms, distance_count, phase_distance_count, yaw_cdeg, yaw_progress_cdeg, yaw_delta_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, gyro_z_filtered_mdps, ir_ok, sample, motor_b_total, motor_a_total) ((void)0)
 #define race_log_segment_start_snapshot(target_laps, lap, phase, elapsed_ms, nav_ok, yaw_cdeg, gyro_z_filtered_mdps) ((void)0)
 #define race_ram_log_dump(target_laps) ((void)0)
