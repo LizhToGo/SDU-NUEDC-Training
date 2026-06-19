@@ -112,7 +112,7 @@ clean build：
 | `TASK1_*` | 任务一 A->B 直线、停止线、起步斜坡、航向修正 |
 | `TASK2_*` | 任务二 AB/CD 直线、BC/DA 弧线、Task2 RAM 日志 |
 | `TASK3_*` | 任务三几何、弧线、直线搜索、点位声光 |
-| `TASK4_*` | 任务四复用任务三参数并扩展多圈逻辑 |
+| `TASK4_*` | 任务四多圈逻辑和历史兼容参数 |
 | `TASK6_*` | C 点快速转向测试 |
 | `RACE_*` | 当前竞速路径参数，实际由 `race_*` 逻辑使用 |
 
@@ -121,15 +121,19 @@ clean build：
 ```c
 #define STRAIGHT_B_BASE_PWM (628)
 #define STRAIGHT_A_BASE_PWM (633)
-#define TASK3_AC_HEADING_TARGET_CDEG  (-3660)
-#define TASK3_BD_HEADING_TARGET_CDEG  (-13920)
-#define RACE_AC_HEADING_TARGET_CDEG (-50)
-#define RACE_BD_HEADING_TARGET_CDEG (-10638)
+#define RACE_TASK3_AC_HEADING_TARGET_CDEG (-3300)
+#define RACE_TASK3_BD_HEADING_TARGET_CDEG (-18000 + 3850)
+#define RACE_TASK4_AC_HEADING_TARGET_CDEG (-3300)
+#define RACE_TASK4_BD_HEADING_TARGET_CDEG (-18000 + 3800)
 #define RACE_STRAIGHT_BASE_PWM      (600)
+#define RACE_TASK4_STRAIGHT_BASE_PWM (840)
 #define RACE_ARC_BASE_PWM           (540)
+#define RACE_TASK4_ARC_BASE_PWM     (670)
 #define RACE_START_ALARM_MS         (RACE_POINT_ALARM_MS)
 #define RACE_AC_POINT_ARM_COUNT     (7300)
 #define RACE_BD_POINT_ARM_COUNT     (7300)
+#define RACE_TASK4_BD_POINT_ARM_COUNT (6600)
+#define RACE_TASK4_BD_FORCE_TURN_COUNT (7200)
 ```
 
 宏说明见 [docs/app_config宏定义说明.md](docs/app_config宏定义说明.md)。
@@ -145,11 +149,11 @@ AC 直线 -> CB 左弧线 -> BD 直线 -> DA 右弧线
 控制要点：
 
 - 起步提示：任务三/四启动时使用 `st011_start_pulse(RACE_START_ALARM_MS)` 非阻塞触发一次声光模块。
-- AC/BD 直线：以 JY62 航向目标为主，红外用于点位检测和辅助记录。
+- AC/BD 直线：以 JY62 航向目标为主，红外用于点位检测和辅助记录；任务四有独立高速 PWM、BD 点位 arm 和 BD 强制入弯距离。
 - CB/DA 弧线：以红外循迹和差速控制为主，可记录 JY62 航向误差。
 - C/D 点：通过红外线判定进入转向动作。
 - B/A 点：弧线出口后执行到目标航向的转向动作。
-- 任务四只是把同一套段落跑 4 圈。
+- 任务四跑 4 圈，并在任务三稳定参数外叠加更高速度、入弯/出弯保护和 RAM 日志分析参数。
 
 调试说明见 [docs/任务三调试说明.md](docs/任务三调试说明.md) 和 [docs/任务四调试说明.md](docs/任务四调试说明.md)。
 

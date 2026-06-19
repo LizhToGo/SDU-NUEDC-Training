@@ -95,7 +95,8 @@ static void race_configure_phase(const race_context_t *ctx,
         config->straight_target_cdeg = task4_mode ?
             RACE_TASK4_BD_HEADING_TARGET_CDEG :
             RACE_TASK3_BD_HEADING_TARGET_CDEG;
-        config->point_arm_count = RACE_BD_POINT_ARM_COUNT;
+        config->point_arm_count = task4_mode ?
+            RACE_TASK4_BD_POINT_ARM_COUNT : RACE_BD_POINT_ARM_COUNT;
         config->force_count = RACE_STRAIGHT_FORCE_COUNT;
     } else {
         config->phase_name = "DA";
@@ -330,12 +331,17 @@ static void race_compute_loop_control(race_context_t *ctx,
         ctx->control_turn = ctx->line_turn;
     }
 
-    ctx->left_pwm = clamp_i32(ctx->drive.motor_b_pwm + ctx->control_turn,
+    {
+        int32_t max_pwm = (ctx->target_laps == TASK4_LAP_COUNT) ?
+            RACE_TASK4_LINE_MAX_PWM : RACE_LINE_MAX_PWM;
+
+        ctx->left_pwm = clamp_i32(ctx->drive.motor_b_pwm + ctx->control_turn,
         RACE_LINE_MIN_PWM,
-        RACE_LINE_MAX_PWM);
-    ctx->right_pwm = clamp_i32(ctx->drive.motor_a_pwm - ctx->control_turn,
+            max_pwm);
+        ctx->right_pwm = clamp_i32(ctx->drive.motor_a_pwm - ctx->control_turn,
         RACE_LINE_MIN_PWM,
-        RACE_LINE_MAX_PWM);
+            max_pwm);
+    }
 }
 
 /**
@@ -392,7 +398,11 @@ static uint8_t race_check_straight_force_turn(const race_context_t *ctx,
         return (ctx->phase_distance_count >= force_count) ? 1U : 0U;
     }
     if (ctx->phase == 2U) {
-        return (ctx->phase_distance_count >= RACE_BD_FORCE_TURN_COUNT) ? 1U : 0U;
+        uint8_t task4_mode = (ctx->target_laps == TASK4_LAP_COUNT) ? 1U : 0U;
+        int32_t force_count = task4_mode ? RACE_TASK4_BD_FORCE_TURN_COUNT :
+            RACE_BD_FORCE_TURN_COUNT;
+
+        return (ctx->phase_distance_count >= force_count) ? 1U : 0U;
     }
     return 0U;
 }
