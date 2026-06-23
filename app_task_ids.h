@@ -15,6 +15,7 @@ typedef enum {
     TASK_ID_5 = 5,
     TASK_ID_6 = 6,
     TASK_ID_7 = 7,
+    TASK_ID_8 = 8,
     TASK_ID_10 = 10,
     TASK_ID_STOP = 255
 } task_id_t;
