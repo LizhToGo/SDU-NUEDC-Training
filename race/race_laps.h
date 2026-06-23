@@ -183,41 +183,6 @@ static uint8_t run_task2_cd_exit_angle_straight(const char *tag)
 }
 
 /**
- * @brief UART 10 yaw-zero monitor used to confirm AB reference heading.
- */
-static void run_task10_ab_zero_test(void)
-{
-    uint32_t elapsed_ms = 0;
-    int32_t yaw_cdeg = 0;
-    int32_t gyro_z_filtered_mdps = 0;
-    uint8_t ok;
-    uint8_t nav_ok;
-
-    TB6612_Brake();
-    ok = jy62_zero_to_current("TASK10_AB_ZERO", 0U);
-    nav_ok = race_peek_yaw(&yaw_cdeg, &gyro_z_filtered_mdps);
-    lc_printf("TASK10 yaw_monitor start: zero_ok=%u nav=%u rel=%ld gzlp=%ld period=200ms\r\n",
-        ok,
-        nav_ok,
-        yaw_cdeg,
-        gyro_z_filtered_mdps);
-
-    while (task_uart_stop_requested() == 0U) {
-        delay_ms_with_st011(200U);
-        elapsed_ms += 200U;
-        nav_ok = race_peek_yaw(&yaw_cdeg, &gyro_z_filtered_mdps);
-        lc_printf("TASK10_YAW t=%lu nav=%u rel=%ld deg_x100=%ld gzlp=%ld\r\n",
-            elapsed_ms,
-            nav_ok,
-            yaw_cdeg,
-            yaw_cdeg,
-            gyro_z_filtered_mdps);
-    }
-
-    lc_printf("TASK10 yaw_monitor stop: t=%lu\r\n", elapsed_ms);
-}
-
-/**
  * @brief Execute Task3/Task4 race laps using the shared AC/CB/BD/DA phase loop.
  */
 static void run_race_laps(uint8_t target_laps)

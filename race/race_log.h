@@ -192,25 +192,10 @@ typedef struct {
     race_summary_log_t summary_log[RACE_RAM_SUMMARY_CAPACITY];
 } race_ram_storage_t;
 
-#if TASK5_RAM_LOG_ENABLE
-typedef union {
-    race_ram_storage_t race;
-    task5_ram_log_t task5[TASK5_RAM_LOG_CAPACITY];
-} task_ram_log_storage_t;
-
-static task_ram_log_storage_t g_task_ram_log_storage;
-#define g_race_window_log (g_task_ram_log_storage.race.window_log)
-#define g_race_event_log (g_task_ram_log_storage.race.event_log)
-#define g_race_summary_log (g_task_ram_log_storage.race.summary_log)
-task5_ram_log_t * const g_task5_ram_log = g_task_ram_log_storage.task5;
-uint16_t g_task5_ram_log_count;
-uint16_t g_task5_ram_log_overflow;
-#else
 static race_ram_storage_t g_race_ram_storage;
 #define g_race_window_log (g_race_ram_storage.window_log)
 #define g_race_event_log (g_race_ram_storage.event_log)
 #define g_race_summary_log (g_race_ram_storage.summary_log)
-#endif
 
 static race_segment_accum_t g_race_segment_accum;
 static uint16_t g_race_window_log_count;
@@ -1063,13 +1048,6 @@ static void race_ram_log_dump(uint8_t target_laps)
 #define race_ram_log_event(event, reason, lap, phase, extra_flags, elapsed_ms, distance_count, phase_distance_count, yaw_cdeg, yaw_progress_cdeg, yaw_delta_cdeg, expected_yaw_cdeg, heading_error_cdeg, nav_turn, gyro_z_filtered_mdps, ir_ok, sample, motor_b_total, motor_a_total) ((void)0)
 #define race_log_segment_start_snapshot(target_laps, lap, phase, elapsed_ms, nav_ok, yaw_cdeg, gyro_z_filtered_mdps) ((void)0)
 #define race_ram_log_dump(target_laps) ((void)0)
-#endif
-
-#if TASK5_RAM_LOG_ENABLE && !RACE_RAM_LOG_ENABLE
-static task5_ram_log_t g_task5_ram_log_storage[TASK5_RAM_LOG_CAPACITY];
-task5_ram_log_t * const g_task5_ram_log = g_task5_ram_log_storage;
-uint16_t g_task5_ram_log_count;
-uint16_t g_task5_ram_log_overflow;
 #endif
 
 #endif /* RACE_LOG_H */

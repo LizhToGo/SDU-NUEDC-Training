@@ -14,7 +14,6 @@
 
 #include "app_config.h"
 #include "app_control.h"
-#include "app_debug_modes.h"
 #include "app_motion_utils.h"
 #include "app_services.h"
 #include "app_straight.h"
@@ -169,7 +168,7 @@ static int32_t task2_fixed_yaw_correction(uint8_t nav_ok,
     }
 
     yaw_error_cdeg = normalize_cdeg(nav->yaw_relative_cdeg - yaw_target_cdeg);
-    if (abs_i32(yaw_error_cdeg) <= TASK5_YAW_DEADBAND_CDEG) {
+    if (abs_i32(yaw_error_cdeg) <= STRAIGHT_YAW_DEADBAND_CDEG) {
         yaw_error_cdeg = 0;
     }
 
@@ -185,6 +184,39 @@ static int32_t task2_fixed_yaw_correction(uint8_t nav_ok,
     (void)nav_ok;
     (void)nav;
     (void)yaw_target_cdeg;
+    return 0;
+#endif
+}
+
+static int32_t straight_line_yaw_correction(uint8_t nav_ok,
+    const jy62_navigation_t *nav,
+    int32_t yaw_start_cdeg)
+{
+#if ENABLE_JY62_NAV
+    int32_t yaw_error_cdeg;
+    int32_t correction;
+
+    if ((nav_ok == 0U) || (nav == 0)) {
+        return 0;
+    }
+
+    yaw_error_cdeg = normalize_cdeg(nav->yaw_relative_cdeg - yaw_start_cdeg);
+    if (abs_i32(yaw_error_cdeg) <= STRAIGHT_YAW_DEADBAND_CDEG) {
+        yaw_error_cdeg = 0;
+    }
+
+    correction = -(yaw_error_cdeg / STRAIGHT_YAW_CORR_DIVISOR);
+#if STRAIGHT_YAW_GYRO_DAMP_DIVISOR > 0
+    correction -= nav->gyro_z_filtered_mdps / STRAIGHT_YAW_GYRO_DAMP_DIVISOR;
+#endif
+
+    return clamp_i32(correction,
+        -STRAIGHT_YAW_CORR_MAX,
+        STRAIGHT_YAW_CORR_MAX);
+#else
+    (void)nav_ok;
+    (void)nav;
+    (void)yaw_start_cdeg;
     return 0;
 #endif
 }
@@ -261,7 +293,7 @@ static void straight_line_apply_drive_control(
             task2_fixed_yaw_correction(input->nav_ok,
                 input->nav,
                 input->yaw_target_cdeg) :
-            task5_yaw_correction(input->nav_ok,
+            straight_line_yaw_correction(input->nav_ok,
                 input->nav,
                 input->yaw_target_cdeg);
     } else {

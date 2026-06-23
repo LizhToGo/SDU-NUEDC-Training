@@ -7,48 +7,42 @@
 - 芯片/工程类型：TI MSPM0G3507，SysConfig + DriverLib + CCS 工程。
 - 不手动修改生成物：`Debug/`、SysConfig 生成文件、`.out/.map/.obj` 等构建输出。
 - `main.syscfg` 是引脚、外设、时钟和中断配置源头。
-- 新增源码文件时要注意 CCS 工程是否需要注册；本轮 `race_log.h` 是 header-only 拆分，不需要改 `.cproject`。
-- 验证命令优先使用 `C:\ti\ccs2051\ccs\utils\bin\gmake.exe -C Debug clean all`。
+- 新增 `.c` 文件前要确认 CCS 工程会纳入编译；当前业务代码仍以 header-only 为主。
+- 验证命令优先使用 `C:\ti\ccs2051\ccs\utils\bin\gmake.exe -C Debug all`。
+
+## 当前入口
+
+验收版只保留任务一二三四：
+
+- UART/按键 `01`：任务一，`run_task1_ab()`。
+- UART/按键 `02`：任务二，`run_task2_abcd()`。
+- UART/按键 `03`：任务三，`run_race_laps(1U)`。
+- UART/按键 `04`：任务四，`run_race_laps(4U)`。
+- UART `00`：运行中强制停车。
+
+UART `05/06/07/08/10/11` 均不是当前验收版入口。
 
 ## 当前源码结构
 
-- `main.c`：保留系统初始化、ISR、任务调度、任务一/二/六/十、竞速编排和运动原语，当前约 4400 行。
-- `race_log.h`：竞速 RAM 日志系统，包含 `race_ram_log_*()`、`RACE_RAM_*` dump 输出和日志存储。
-- `app_config.h`：集中放置调参宏。当前竞速参数宏已统一使用 `RACE_*` 命名，函数和日志前缀为 `race_` / `RACE_`。
-- `app_control.h`：限幅、斜坡、PID、航向滤波等控制基础工具。
-- `app_motion_utils.h`：角度归一化 `normalize_cdeg()` 和左右轮平均距离工具。
-- `app_services.h/.c`：ST011 声光模块、带 ST011 服务的延时、UART stop 检测。
-- `app_task_ids.h/.c`：任务 ID、UART/按键任务命令解析、等待任务入口。
-- `app_straight.h`：差速直行控制模块。
-- `app_debug_modes.h`：05/07 轮速测试、红外打印、纯红外循迹等调试模式。
-- `tools/task11_log_to_csv.py`：历史 Task11/当前 RACE RAM 日志整理脚本，仍保留旧文件名。
-- `Board/`：UART0 打印和基础延时。
-- `BSP/`：TB6612、红外、编码器、JY62 驱动。
+- `main.c`：系统启动、JY62/编码器/TB6612 初始化、ISR、进入任务调度器。
+- `app_task_ids.c/.h`：只解析 `01..04` 和运行中 stop。
+- `tasks/task_dispatcher.h`：任务调度，只分发任务一二三四。
+- `tasks/task_sequences.h`：任务一/二顶层序列。
+- `straight/straight_line.h`：任务一/二直线段。
+- `turn/arc_segment.h`：任务二弧线段。
+- `race/race_laps.h`：任务三/四跑圈主流程。
+- `race/race_phase.h`：任务三/四阶段控制和点位判定。
+- `race/race_primitives.h`：入弯、出弯、强制找线、航向转向等运动原语。
+- `race/race_log.h`：任务三/四 RAM 日志。
+- `race/task2_ram_log.h`：任务二 RAM 日志。
+- `app_config.h`：集中调参入口。
 
-## 任务入口
-
-- UART/按键 `01`：任务一。
-- UART/按键 `02`：任务二。
-- UART/按键 `03`：调用 `run_race_laps(1U)`。
-- UART/按键 `04`：调用 `run_race_laps(4U)`。
-- UART `05/06/07/10`：调试或专项验证入口。
-- UART `00`：运行中强制停车。
-- UART `11` 已移除，不再作为可运行入口。
-
-## 代码重构状态
-
-- 已删除旧 Task3/4 死代码：`run_task3_acbda()`、`run_task4_lap()`、`run_task4_four_laps()` 等。
-- 已删除旧 `run_task3_race_arc_line_follow_segment()` 残留。
-- `run_task11_ir_map_test_laps()` 已改名为 `run_race_laps()`。
-- 实现层 `task11_*` 已重命名为 `race_*`，日志前缀已统一为 `RACE_*`。
-- `app_config.h` 中竞速相关参数已统一为 `RACE_*` 前缀，这些参数仍是当前竞速路径实际配置。
-- 已消除 `bsp_encoder.h` 部分重复逻辑。
-- 已减少 `task5_ram_log_sample()` 参数数量。
-- `race_log.h` 已从 `main.c` 抽出，当前代码质量总分约 `61.44/100`，`main.c` 仍是后续重构重点。
+已删除历史调试模块：`app_debug_modes.h`、`heading/heading_straight.h`、`turn/line_fast_turn.h`、`tasks/task6_turn_test.h`、`tasks/task8_exit_turn_calibration.h`。
 
 ## 调参提醒
 
-- 任务一/任务二 AB 主要看 `run_straight_to_line_segment()` 和 `app_straight.h`。
-- 任务三/四当前入口走竞速路径，优先看 `run_race_laps()`、`race_*` helper、`RACE_*` 竞速参数、`TASK3_AC_HEADING_TARGET_CDEG`、`TASK3_BD_HEADING_TARGET_CDEG`。
-- 串口日志太密会影响实车控制，竞速大体量日志优先使用 RAM dump 后处理。
-- 旧文档中关于 UART `11`、`run_task11_ir_map_test_laps()`、`RACE_DATA/RACE_RAM_END` 的描述需要按当前 `03/04 + run_race_laps + RACE_*` 理解。
+- 默认只改 `app_config.h`，尤其是任务四高速参数。
+- 除非明确要求，不要改任务一/二/三的稳定参数。
+- 任务三/四共用竞速实现，任务四通过 `RACE_TASK4_*` 拆出高速参数。
+- 串口实时日志过密会影响实车控制，高速复盘优先用 RAM dump。
+- 本地日志/CSV 属于测试产物，不要随手提交。

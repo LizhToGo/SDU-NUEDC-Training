@@ -9,28 +9,17 @@
 #include "app_services.h"
 #include "app_straight.h"
 #include "app_task_ids.h"
-#include "app_debug_modes.h"
-#include "turn/line_fast_turn.h"
 #include "bsp_encoder.h"
 
 /*
- * 当前主程序说明：
- *
- * 1. 上电后先由 SysConfig 初始化时钟、GPIO、PWM、UART、I2C 等外设。
- * 2. 初始化 JY62、编码器状态和 TB6612 电机驱动。
- * 3. 正式模式下等待四个实体任务按键或 UART0 命令：
- *    A26/01 启动任务一，A24/02 启动任务二，B24/03 启动任务三，
- *    A22/04 启动任务四，05 进入轮速测试，00 强制停车。
- * 4. 调试模式仍可通过 app_config.h 中的开关进入红外打印、
- *    纯红外循迹或基础轮速 PID 测试。
+ * Acceptance-mode firmware:
+ * 1. Initialize SysConfig, JY62, encoders, and TB6612.
+ * 2. Enter the blocking task dispatcher.
+ * 3. Accept only Task1..Task4 from buttons or UART0 commands 01..04.
  */
 
 /* Set once the firmware has established a JY62 relative-yaw zero. */
 static uint8_t g_jy62_zero_ready;
-
-/* One-shot request consumed by heading_straight.h when Task6 reaches C. */
-static uint8_t g_task6_c_turn_requested;
-
 
 /**
  * @brief IR-assisted fast-turn command used by race point actions.
@@ -163,130 +152,6 @@ static int32_t task2_straight_search_direction(uint8_t fast_correction,
 
     return 1;
 }
-
-/**
- * @brief Return whether a tag belongs to one Task4 AC debug segment.
- */
-static uint8_t task4_ac_debug_enabled(const char *tag)
-{
-    return ((tag[0] == 'T') &&
-        (tag[1] == 'A') &&
-        (tag[2] == 'S') &&
-        (tag[3] == 'K') &&
-        (tag[4] == '4') &&
-        (tag[5] == '_') &&
-        (tag[6] == 'L') &&
-        (tag[8] == '_') &&
-        (tag[9] == 'A') &&
-        (tag[10] == 'C') &&
-        (tag[11] == '\0')) ? 1U : 0U;
-}
-
-/**
- * @brief Map a Task4 AC segment tag to its matching C-turn log tag.
- */
-static const char *task4_ac_turn_tag(const char *tag)
-{
-    static const char * const turn_tags[TASK4_LAP_COUNT] = {
-        "TASK4_L1_C_TURN",
-        "TASK4_L2_C_TURN",
-        "TASK4_L3_C_TURN",
-        "TASK4_L4_C_TURN"
-    };
-    uint8_t lap_index = (uint8_t)(tag[7] - '1');
-
-    if (lap_index < TASK4_LAP_COUNT) {
-        return turn_tags[lap_index];
-    }
-
-    return "TASK4_C_TURN";
-}
-
-/**
- * @brief Return whether a tag belongs to Task3/Task4 BD debug handling.
- */
-static uint8_t task4_bd_debug_enabled(const char *tag)
-{
-    if ((tag[0] == 'T') &&
-        (tag[1] == 'A') &&
-        (tag[2] == 'S') &&
-        (tag[3] == 'K') &&
-        (tag[4] == '3') &&
-        (tag[5] == '_') &&
-        (tag[6] == 'B') &&
-        (tag[7] == 'D') &&
-        (tag[8] == '\0')) {
-        return 1U;
-    }
-
-    return ((tag[0] == 'T') &&
-        (tag[1] == 'A') &&
-        (tag[2] == 'S') &&
-        (tag[3] == 'K') &&
-        (tag[4] == '4') &&
-        (tag[5] == '_') &&
-        (tag[6] == 'L') &&
-        (tag[8] == '_') &&
-        (tag[9] == 'B') &&
-        (tag[10] == 'D') &&
-        (tag[11] == '\0')) ? 1U : 0U;
-}
-
-/**
- * @brief Map a BD segment tag to the matching D-turn log tag.
- */
-static const char *task4_bd_turn_tag(const char *tag)
-{
-    static const char * const turn_tags[TASK4_LAP_COUNT] = {
-        "TASK4_L1_D_TURN",
-        "TASK4_L2_D_TURN",
-        "TASK4_L3_D_TURN",
-        "TASK4_L4_D_TURN"
-    };
-    uint8_t lap_index;
-
-    if ((tag[0] == 'T') &&
-        (tag[1] == 'A') &&
-        (tag[2] == 'S') &&
-        (tag[3] == 'K') &&
-        (tag[4] == '3')) {
-        return "TASK3_D_TURN";
-    }
-
-    lap_index = (uint8_t)(tag[7] - '1');
-
-    if (lap_index < TASK4_LAP_COUNT) {
-        return turn_tags[lap_index];
-    }
-
-    return "TASK4_D_TURN";
-}
-
-/**
- * @brief Print the line-hit snapshot captured at the end of an AC segment.
- */
-static void task4_print_ac_line_debug(const char *tag,
-    uint32_t elapsed_ms,
-    int32_t distance_count,
-    const ir_tracking_sample_t *line_sample,
-    uint8_t nav_ok,
-    const jy62_navigation_t *nav)
-{
-    lc_printf("%s line_debug: ac_t=%lu ac_dist=%ld line_yaw=%ld line_gzlp=%ld line_raw=0x%02X line_mask=0x%02X line_cnt=%u line_lost=%u line_err=%ld nav=%u\r\n",
-        tag,
-        elapsed_ms,
-        distance_count,
-        (nav_ok != 0U) ? nav->yaw_relative_cdeg : 0,
-        (nav_ok != 0U) ? nav->gyro_z_filtered_mdps : 0,
-        (line_sample != 0) ? line_sample->raw : 0xFFU,
-        (line_sample != 0) ? line_sample->line_mask : 0U,
-        (line_sample != 0) ? line_sample->active_count : 0U,
-        (line_sample != 0) ? line_sample->line_lost : 1U,
-        (line_sample != 0) ? line_sample->error : 0,
-        nav_ok);
-}
-
-#include "heading/heading_straight.h"
 
 #include "race/task2_ram_log.h"
 
@@ -426,9 +291,7 @@ static uint8_t task2_post_exit_arc_to_yaw(const char *tag,
 
 #include "turn/arc_segment.h"
 #include "straight/straight_line.h"
-#include "tasks/task6_turn_test.h"
 #include "race/race_laps.h"
-#include "tasks/task8_exit_turn_calibration.h"
 #include "tasks/task_sequences.h"
 #include "tasks/task_dispatcher.h"
 
@@ -459,29 +322,7 @@ int main(void)
     st011_set_active(0U);
     delay_ms(1000);
 
-#if ENABLE_CONTEST_TASKS
     run_task_dispatcher();
-#elif ENABLE_LINE_FOLLOW_TEST
-    run_line_follow_test();
-#elif ENABLE_IR_TRACKING_UART_TEST
-    /*
-     * 当前默认进入红外模块串口打印测试。
-     * 想重新跑直行 PID 时，把 ENABLE_IR_TRACKING_UART_TEST 改为 0 后重新编译烧录。
-     */
-    run_ir_tracking_uart_test();
-#else
-
-    /* 默认关闭自检；只有小车架空时才建议打开。 */
-    if ((ENABLE_ENCODER_SELF_TEST != 0) && (encoder_motor_self_test() == 0U)) {
-        lc_printf("Self-test failed. Fix wiring/direction before PID run.\r\n");
-        while (1) {
-            TB6612_Brake();
-            delay_ms(1000);
-        }
-    }
-
-    run_motor_pid_stream();
-#endif
 
     while (1) {
     }

@@ -2,7 +2,7 @@
  * @file app_config.h
  * @brief Central tuning constants for the NUEDC training car firmware.
  *
- * This file intentionally keeps contest, debug, motor, encoder, IR, and JY62
+ * This file intentionally keeps contest-task, motor, encoder, IR, and JY62
  * tuning values in one place. Most constants are empirical track-test values,
  * so edits here should be small and recorded in serial logs or project notes.
  */
@@ -19,45 +19,20 @@
 #define STRAIGHT_MIN_PWM    (0)
 #define STRAIGHT_MAX_PWM    (870)
 
-/* Common debug report period and Task5 RAM-log/yaw-assist controls. */
-#define PID_REPORT_PERIOD_MS (100)
-#define TASK5_RAM_LOG_ENABLE       (0)
-#define TASK5_RAM_LOG_CAPACITY     (384)
-#define TASK5_RAM_LOG_PERIOD_MS    (40)
-#define TASK5_DUMP_LINE_DELAY_MS   (100)
-#define TASK5_YAW_CORR_ENABLE      (1)
-#define TASK5_YAW_DEADBAND_CDEG    (20)
-#define TASK5_YAW_CORR_DIVISOR     (30)
-#define TASK5_YAW_CORR_MAX         (18)
-#define TASK5_YAW_GYRO_DAMP_DIVISOR (2600)
+/* Common straight-line yaw-assist controls. */
+#define STRAIGHT_YAW_DEADBAND_CDEG    (20)
+#define STRAIGHT_YAW_CORR_DIVISOR     (30)
+#define STRAIGHT_YAW_CORR_MAX         (18)
+#define STRAIGHT_YAW_GYRO_DAMP_DIVISOR (2600)
 
 /* 功能开关。 */
-/* Compile-time feature switches for debug modes and contest tasks. */
-#define ENABLE_IR_TRACKING_UART_TEST (0)
-#define ENABLE_CONTEST_TASKS         (1)
-#define ENABLE_LINE_FOLLOW_TEST      (0)
+/* Compile-time feature switches for production tasks. */
 #define ENABLE_JY62_NAV              (1)
-#define ENABLE_ENCODER_SELF_TEST     (0)
 
 /* JY62 陀螺仪的置零和状态打印周期。 */
 /* JY62 boot-zero delay and periodic navigation report interval. */
 #define JY62_BOOT_ZERO_DELAY_MS    (300)
 #define JY62_TASK_REPORT_PERIOD_MS (500)
-
-/* 红外模块串口调试模式。 */
-/* IR tracking module UART test sampling period. */
-#define IR_TRACKING_TEST_PERIOD_MS (100)
-
-/* 纯红外循迹调试模式。 */
-/* Pure IR line-follow test loop, report, PWM, and turn-gain limits. */
-#define LINE_FOLLOW_PERIOD_MS        (20)
-#define LINE_FOLLOW_REPORT_PERIOD_MS (300)
-#define LINE_FOLLOW_BASE_PWM         (480)
-#define LINE_FOLLOW_MIN_PWM          (0)
-#define LINE_FOLLOW_MAX_PWM          (820)
-#define LINE_FOLLOW_TURN_DIVISOR     (11)
-#define LINE_FOLLOW_TURN_LIMIT       (420)
-#define LINE_FOLLOW_TURN_SIGN        (1)
 
 /* 任务按键和任务一/二时序参数。 */
 /* Button debounce plus Task1 start/stop timing and straight-line limits. */
@@ -131,8 +106,7 @@
 /* Default wheel-speed difference target: B_spd - A_spd. */
 #define STRAIGHT_TARGET_SPEED_DIFF (0)
 
-/* 05 轮速标定模式使用更大的限幅，用于验证弧线会用到的非零差速闭环。 */
-/* Task05 wheel-speed PID tuning mode with wider correction limits. */
+/* Shared wide-limit wheel-speed PID profile used by straight/race controllers. */
 #define PID_TEST_TARGET_SPEED_DIFF (0)
 #define PID_TEST_I_LIMIT           (600)
 #define PID_TEST_CORR_MAX          (180)
@@ -140,8 +114,7 @@
 #define PID_TEST_DISTANCE_CORR_DIVISOR (9)
 #define PID_TEST_DISTANCE_CORR_MAX     (45)
 
-/* 07 差速 PD 调参模式：只看 B_spd - A_spd 的 P/D 响应，累计距离差只打印不参与修正。 */
-/* Task07 speed-difference PD tuning; distance error is logged only. */
+/* Shared PD profile used by the race differential controller. */
 #define PD_TEST_TARGET_SPEED_DIFF  (20)
 #define PD_TEST_KP                 (22)
 #define PD_TEST_KD                 (6)
@@ -237,22 +210,6 @@
 #define TASK4_AC_START_HEADING_CORR_DIVISOR (3)
 #define TASK4_AC_START_HEADING_CORR_MAX     (300)
 #define TASK4_AC_START_CORR_MAX       (285)
-
-/* 06 debug: run task3 AC, then make an immediate fast left turn at C and stop. */
-#define TASK6_C_TURN_TARGET_CDEG      (2200)
-#define TASK6_C_TURN_B_PWM            (-220)
-#define TASK6_C_TURN_A_PWM            (760)
-#define TASK6_C_TURN_TIMEOUT_MS       (1200)
-#define TASK6_C_TURN_REPORT_PERIOD_MS (40)
-#define TASK6_C_TURN_SAMPLE_MAX       (64)
-#define TASK6_C_TURN_LINE_ARM_CDEG    (1200)
-#define TASK6_C_TURN_LINE_STOP_MASK   (0x7EU)
-#define TASK6_C_TURN_LINE_STOP_MIN_COUNT (1)
-
-/* Task4 debug turn after BD line: immediate right turn into DA. */
-#define TASK4_D_TURN_TARGET_CDEG      (-2200)
-#define TASK4_D_TURN_B_PWM            (760)
-#define TASK4_D_TURN_A_PWM            (-220)
 
 /*
  * Race lap control shared by Task3 and Task4.
@@ -372,7 +329,7 @@
 #define RACE_TASK4_START_RIGHT_TURN_SLOW_B_PWM (RACE_EXIT_RIGHT_TURN_SLOW_B_PWM)
 #define RACE_TASK4_START_RIGHT_TURN_SLOW_A_PWM (RACE_EXIT_RIGHT_TURN_SLOW_A_PWM)
 #define RACE_FAST_TURN_TIMEOUT_MS   (1000)
-#define RACE_FAST_TURN_REPORT_PERIOD_MS (TASK6_C_TURN_REPORT_PERIOD_MS)
+#define RACE_FAST_TURN_REPORT_PERIOD_MS (40)
 #define RACE_FAST_TURN_GYRO_SLOW_ENABLE (1)
 #define RACE_FAST_TURN_GYRO_SLOW_CDEG (2600)
 #define RACE_EXIT_TURN_YAW_STOP_ENABLE (1)
@@ -386,19 +343,16 @@
     (RACE_TURN_YAW_SLOW_ZONE_CDEG)
 #define RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS \
     (RACE_TURN_YAW_STOP_GZLP_TOL_MDPS)
-#define TASK8_EXIT_TURN_TEST_ANGLE_CDEG (3680)
-#define TASK8_EXIT_TURN_TEST_PAIR_COUNT (5)
-#define TASK8_EXIT_TURN_TEST_WAIT_MS    (500)
 /* Race straight heading targets and point-detection distances. */
-#define RACE_TASK3_AC_HEADING_TARGET_CDEG (-3300)
+#define RACE_TASK3_AC_HEADING_TARGET_CDEG (-3350)
 /* Task3 keeps its own copy of the current Task4 mirrored field geometry. */
 #define RACE_TASK3_BD_HEADING_TARGET_CDEG \
-    (-18000 + 3500)
+    (-18000 + 3550)
 /* Task4 starts from AB zero, then turns right to the measured AC heading. */
-#define RACE_TASK4_AC_HEADING_TARGET_CDEG (-3350)
+#define RACE_TASK4_AC_HEADING_TARGET_CDEG (-3380)
 /* The field is symmetric: BD mirrors AC across the vertical axis. */
 #define RACE_TASK4_BD_HEADING_TARGET_CDEG \
-    (-18000 + 3000)
+    (-18000 + 3270)
 #define RACE_TURN_CENTER6_ERROR_MAX (1500)
 #define RACE_POINT_ADVANCE_COUNT    (400)
 #define RACE_TASK4_POINT_ADVANCE_COUNT (RACE_POINT_ADVANCE_COUNT)
@@ -416,7 +370,7 @@
 #define RACE_BD_POINT_ARM_COUNT     (7300)
 #define RACE_TASK4_BD_POINT_ARM_COUNT (6600)
 #define RACE_TASK3_AC_FORCE_TURN_COUNT (7750)
-#define RACE_TASK4_AC_FORCE_TURN_COUNT (7820)
+#define RACE_TASK4_AC_FORCE_TURN_COUNT (7720)
 #define RACE_TASK4_FIRST_AC_FORCE_TURN_COUNT (8000)
 #define RACE_BD_FORCE_TURN_COUNT    (7400)
 #define RACE_TASK4_BD_FORCE_TURN_COUNT (7500)
