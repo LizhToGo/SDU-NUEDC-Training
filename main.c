@@ -49,6 +49,7 @@ typedef struct {
     int32_t stop_error_max;
     uint8_t yaw_stop_enable;
     int32_t yaw_stop_target_cdeg;
+    uint32_t control_period_ms;
 } sensor_fast_turn_config_t;
 
 /**
@@ -427,6 +428,7 @@ static uint8_t task2_post_exit_arc_to_yaw(const char *tag,
 #include "straight/straight_line.h"
 #include "tasks/task6_turn_test.h"
 #include "race/race_laps.h"
+#include "tasks/task8_exit_turn_calibration.h"
 #include "tasks/task_sequences.h"
 #include "tasks/task_dispatcher.h"
 

@@ -569,14 +569,17 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
                 RACE_TASK4_ENTRY_LEFT_TURN_SLOW_B_PWM : RACE_LEFT_TURN_SLOW_B_PWM,
             .slow_motor_a_pwm = task4_mode ?
                 RACE_TASK4_ENTRY_LEFT_TURN_SLOW_A_PWM : RACE_LEFT_TURN_SLOW_A_PWM,
-            .stop_mask = RACE_IR_CENTER_6_MASK,
-            .forbid_mask = RACE_IR_CENTER_6_FORBID_MASK,
+            .stop_mask = RACE_IR_CENTER_4_MASK,
+            .forbid_mask = RACE_IR_CENTER_4_FORBID_MASK,
             .stop_error_max = RACE_TURN_CENTER6_ERROR_MAX,
             .yaw_stop_enable = 0U,
-            .yaw_stop_target_cdeg = 0
+            .yaw_stop_target_cdeg = 0,
+            .control_period_ms = task4_mode ?
+                RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
         };
         turn_success = race_advance_after_point("RACE_C_ADVANCE",
-            RACE_POINT_ADVANCE_COUNT);
+            task4_mode ? RACE_TASK4_POINT_ADVANCE_COUNT :
+                RACE_POINT_ADVANCE_COUNT);
         if (turn_success != 0U) {
             turn_success = race_sensor_fast_turn(&turn_config);
         }
@@ -622,14 +625,17 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
                 RACE_TASK4_ENTRY_RIGHT_TURN_SLOW_B_PWM : RACE_RIGHT_TURN_SLOW_B_PWM,
             .slow_motor_a_pwm = task4_mode ?
                 RACE_TASK4_ENTRY_RIGHT_TURN_SLOW_A_PWM : RACE_RIGHT_TURN_SLOW_A_PWM,
-            .stop_mask = RACE_IR_CENTER_6_MASK,
-            .forbid_mask = RACE_IR_CENTER_6_FORBID_MASK,
+            .stop_mask = RACE_IR_CENTER_4_MASK,
+            .forbid_mask = RACE_IR_CENTER_4_FORBID_MASK,
             .stop_error_max = RACE_TURN_CENTER6_ERROR_MAX,
             .yaw_stop_enable = 0U,
-            .yaw_stop_target_cdeg = 0
+            .yaw_stop_target_cdeg = 0,
+            .control_period_ms = task4_mode ?
+                RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
         };
         turn_success = race_advance_after_point("RACE_D_ADVANCE",
-            RACE_POINT_ADVANCE_COUNT);
+            task4_mode ? RACE_TASK4_POINT_ADVANCE_COUNT :
+                RACE_POINT_ADVANCE_COUNT);
         if (turn_success != 0U) {
             turn_success = race_sensor_fast_turn(&turn_config);
         }
@@ -810,7 +816,8 @@ static uint8_t race_align_start_to_ac(const char *tag,
     int16_t slow_motor_a_pwm,
     int32_t ac_target_cdeg,
     int32_t bd_target_cdeg,
-    uint8_t predictive_stop_enable)
+    uint8_t predictive_stop_enable,
+    uint32_t control_period_ms)
 {
     const gyro_turn_config_t turn_config = {
         .tag = tag,
@@ -824,8 +831,7 @@ static uint8_t race_align_start_to_ac(const char *tag,
             RACE_TASK4_EXIT_TURN_PREDICT_MS : 0,
         .predictive_stop_min_gz_mdps = (predictive_stop_enable != 0U) ?
             RACE_TASK4_EXIT_TURN_PREDICT_MIN_GZ_MDPS : 0,
-        .control_period_ms = (predictive_stop_enable != 0U) ?
-            RACE_TASK4_CONTROL_PERIOD_MS : CONTROL_PERIOD_MS
+        .control_period_ms = control_period_ms
     };
 
     race_log_printf("%s_ALIGN target=%ld bd_target=%ld\r\n",
@@ -848,7 +854,8 @@ static uint8_t race_task3_align_start_to_ac(void)
         RACE_TASK3_START_RIGHT_TURN_SLOW_A_PWM,
         RACE_TASK3_AC_HEADING_TARGET_CDEG,
         RACE_TASK3_BD_HEADING_TARGET_CDEG,
-        0U);
+        0U,
+        CONTROL_PERIOD_MS);
 #else
     return 1U;
 #endif
@@ -867,7 +874,8 @@ static uint8_t race_task4_align_start_to_ac(void)
         RACE_TASK4_START_RIGHT_TURN_SLOW_A_PWM,
         RACE_TASK4_AC_HEADING_TARGET_CDEG,
         RACE_TASK4_BD_HEADING_TARGET_CDEG,
-        RACE_TASK4_EXIT_TURN_PREDICT_ENABLE);
+        RACE_TASK4_EXIT_TURN_PREDICT_ENABLE,
+        RACE_TASK4_CONTROL_PERIOD_MS);
 #else
     return 1U;
 #endif

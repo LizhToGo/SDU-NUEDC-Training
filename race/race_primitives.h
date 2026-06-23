@@ -164,6 +164,8 @@ static uint8_t race_turn_crossed_target(uint8_t error_valid,
     int32_t current_error_cdeg)
 {
     return ((error_valid != 0U) &&
+        ((abs_i32(last_error_cdeg) <= RACE_TURN_CROSS_ARM_CDEG) ||
+         (abs_i32(current_error_cdeg) <= RACE_TURN_CROSS_ARM_CDEG)) &&
         (((last_error_cdeg < 0) && (current_error_cdeg >= 0)) ||
          ((last_error_cdeg > 0) && (current_error_cdeg <= 0)))) ? 1U : 0U;
 }
@@ -499,13 +501,15 @@ static uint8_t race_sensor_fast_turn(
     const sensor_fast_turn_config_t *config)
 {
     race_sensor_fast_turn_state_t state = {0};
+    uint32_t control_period_ms = (config->control_period_ms != 0U) ?
+        config->control_period_ms : CONTROL_PERIOD_MS;
 
     race_sensor_fast_turn_start(config, &state);
 
     while (state.elapsed_ms < RACE_FAST_TURN_TIMEOUT_MS) {
-        delay_ms_with_st011(CONTROL_PERIOD_MS);
-        state.elapsed_ms += CONTROL_PERIOD_MS;
-        state.report_elapsed_ms += CONTROL_PERIOD_MS;
+        delay_ms_with_st011(control_period_ms);
+        state.elapsed_ms += control_period_ms;
+        state.report_elapsed_ms += control_period_ms;
 
         if (task_uart_stop_requested() != 0U) {
             state.stop_reason = 3U;
@@ -649,6 +653,8 @@ static uint8_t race_gyro_turn_to_yaw(
         predicted_yaw_delta_cdeg = 0;
         predicted_yaw_stop_error_cdeg = yaw_stop_error_cdeg;
         if ((config->predictive_stop_enable != 0U) &&
+            (abs_i32(yaw_stop_error_cdeg) <=
+                RACE_TASK4_EXIT_TURN_PREDICT_ARM_CDEG) &&
             (abs_i32(nav.gyro_z_filtered_mdps) >=
                 abs_i32(config->predictive_stop_min_gz_mdps))) {
             predicted_yaw_delta_cdeg = race_predict_yaw_delta_cdeg(

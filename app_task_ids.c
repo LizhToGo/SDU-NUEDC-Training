@@ -9,8 +9,8 @@
 
 /*
  * UART0 accepts two command styles:
- * - binary bytes: 0x01..0x07, 0x10
- * - ASCII decimal pairs: "01".."07", "10", optionally prefixed with 't'
+ * - binary bytes: 0x01..0x08, 0x10
+ * - ASCII decimal pairs: "01".."08", "10", optionally prefixed with 't'
  * Byte 0x00 is treated as STOP only when allow_binary_stop is enabled.
  */
 typedef struct {
@@ -36,6 +36,7 @@ static const task_uart_command_map_t g_task_uart_number_map[] = {
     {5U, TASK_ID_5},
     {6U, TASK_ID_6},
     {7U, TASK_ID_7},
+    {8U, TASK_ID_8},
     {10U, TASK_ID_10},
 };
 
@@ -48,6 +49,7 @@ static const task_uart_command_map_t g_task_uart_binary_map[] = {
     {0x05U, TASK_ID_5},
     {0x06U, TASK_ID_6},
     {0x07U, TASK_ID_7},
+    {0x08U, TASK_ID_8},
     {0x10U, TASK_ID_10},
 };
 

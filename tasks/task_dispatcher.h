@@ -63,6 +63,9 @@ static void run_selected_task(task_id_t task_id)
     } else if (task_id == TASK_ID_7) {
         TB6612_Brake();
         run_motor_pd_stream();
+    } else if (task_id == TASK_ID_8) {
+        TB6612_Brake();
+        run_task8_exit_turn_calibration();
     } else if (task_id == TASK_ID_10) {
         TB6612_Brake();
         run_task10_ab_zero_test();
@@ -85,7 +88,7 @@ static void run_task_dispatcher(void)
 
     st011_set_active(0U);
     TB6612_Brake();
-    lc_printf("TASK ready: buttons A26/A24/B24/A22 or UART0 HEX bytes 01..07,10; 00=stop while running; ASCII t01..t10 still ok\r\n");
+    lc_printf("TASK ready: buttons A26/A24/B24/A22 or UART0 HEX bytes 01..08,10; 00=stop while running; ASCII t01..t10 still ok\r\n");
 
     while (1) {
         task_id = wait_task_uart_command();
