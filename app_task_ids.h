@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /**
- * @brief Public task identifiers used by UART, buttons, and the dispatcher.
+ * @brief UART、按键和任务调度器共用的公开任务编号。
  */
 typedef enum {
     TASK_ID_NONE = 0,
@@ -15,16 +15,16 @@ typedef enum {
     TASK_ID_STOP = 255
 } task_id_t;
 
-/* Convert decimal command numbers such as 1 and 10 to task ids. */
+/* 将 1、10 这类十进制命令号转换为任务编号。 */
 task_id_t task_uart_command_from_number(uint8_t number);
 
-/* Convert raw binary command bytes such as 0x01 and 0x10 to task ids. */
+/* 将 0x01、0x10 这类原始二进制命令字节转换为任务编号。 */
 task_id_t task_uart_command_from_hex_byte(uint8_t value);
 
-/* Poll UART0 once and return a decoded task command, or TASK_ID_NONE. */
+/* 轮询一次 UART0，返回解析出的任务命令；没有命令时返回 TASK_ID_NONE。 */
 task_id_t task_uart_read_command(uint8_t allow_binary_stop);
 
-/* Brake while waiting for UART or button task selection. */
+/* 等待 UART 或按键选择任务，等待期间保持刹车。 */
 task_id_t wait_task_uart_command(void);
 
 #endif /* APP_TASK_IDS_H */

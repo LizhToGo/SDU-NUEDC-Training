@@ -5,7 +5,7 @@
 #include "app_control.h"
 
 /**
- * @brief Normalize an angle in centi-degrees into [-18000, 18000].
+ * @brief 将百分之一度角度归一化到 [-18000, 18000]。
  */
 static inline int32_t normalize_cdeg(int32_t angle_cdeg)
 {
@@ -21,7 +21,7 @@ static inline int32_t normalize_cdeg(int32_t angle_cdeg)
 }
 
 /**
- * @brief Average absolute left/right encoder totals into forward distance.
+ * @brief 用左右轮编码器绝对值平均得到前进距离。
  */
 static inline int32_t motion_distance_count(int32_t motor_b_total,
     int32_t motor_a_total)
@@ -30,7 +30,7 @@ static inline int32_t motion_distance_count(int32_t motor_b_total,
 }
 
 /**
- * @brief Return signed B-A encoder distance error for straight balancing.
+ * @brief 返回 B-A 有符号编码器距离误差，用于直线平衡。
  */
 static inline int32_t motion_distance_error(int32_t motor_b_total,
     int32_t motor_a_total)

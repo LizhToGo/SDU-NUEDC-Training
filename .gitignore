@@ -1,5 +1,11 @@
 # 本地编辑器配置
 .vscode/
+.idea/
+
+# CCS / Eclipse IDE 自动生成配置
+.settings/
+.theia/
+main.theia-workspace
 
 # CCS / Eclipse 编译输出目录
 /Debug/
@@ -37,21 +43,28 @@ subdir_vars.mk
 Thumbs.db
 .DS_Store
 
+# 串口、实车调试和表格类临时输出
+*.log
+*.csv
+/logs/
+/data/
+
+# Office 临时锁文件
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
 # Python 缓存
 __pycache__/
 *.pyc
 
-.codegraph
+.codegraph/
 
 # 本地代理/编辑器配置
+.agents/
+.codex/
 opencode.json
 
-# Task11 日志脚本导出的本地经验数据
-/task11_experience_*.csv
-/task11_experience_summary.txt
-/data/task11_experience_*.csv
-/data/task11_experience_summary.txt
-
-#ai审查代码输出
+# 本地审查输出
 result.md
 .mimocode/

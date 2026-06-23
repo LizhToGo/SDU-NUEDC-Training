@@ -3,9 +3,9 @@
 
 /**
  * @file race_phase.h
- * @brief Race phase state update, control, point handling, and lap transitions.
+ * @brief 竞速阶段状态更新、控制计算、点位处理和圈数切换。
  *
- * This header is included from race_laps.h after race_context_t and race_primitives.h are available.
+ * 本头文件由 race_laps.h 在 race_context_t 和竞速原语可见后引入。
  */
 
 #include <stdint.h>
@@ -22,7 +22,7 @@
 #include "bsp_tb6612.h"
 
 /**
- * @brief Read JY62 navigation and update yaw progress for the active phase.
+ * @brief 读取 JY62 导航状态，并更新当前阶段的航向进度。
  */
 static void race_read_navigation_state(race_context_t *ctx, uint8_t reset_phase)
 {
@@ -59,7 +59,7 @@ static void race_read_navigation_state(race_context_t *ctx, uint8_t reset_phase)
 }
 
 /**
- * @brief Fill the static AC/CB/BD/DA configuration for ctx->phase.
+ * @brief 根据 ctx->phase 填充 AC/CB/BD/DA 的静态阶段配置。
  */
 static void race_configure_phase(const race_context_t *ctx,
     race_phase_config_t *config)
@@ -112,7 +112,7 @@ static void race_configure_phase(const race_context_t *ctx,
 }
 
 /**
- * @brief Refresh sensors, encoders, phase distance, line flags, and yaw state.
+ * @brief 刷新传感器、编码器、阶段距离、巡线标志和航向状态。
  */
 static void race_update_loop_state(race_context_t *ctx,
     const race_phase_config_t *config)
@@ -147,20 +147,11 @@ static void race_update_loop_state(race_context_t *ctx,
         ctx->edge_point_seen = 0U;
     }
 
-    ctx->point_log_flags = (uint8_t)((ctx->ir_ok != 0U) ?
-        RACE_LOG_FLAG_IR_OK : 0U);
-    ctx->point_log_flags |= (uint8_t)((ctx->line_lost_seen != 0U) ?
-        RACE_LOG_FLAG_LINE_LOST : 0U);
-    ctx->point_log_flags |= (uint8_t)((ctx->edge_point_seen != 0U) ?
-        RACE_LOG_FLAG_EDGE_SEEN : 0U);
-    ctx->point_log_flags |= (uint8_t)((ctx->straight_line_seen_count != 0U) ?
-        RACE_LOG_FLAG_GUIDE_SEEN : 0U);
-    ctx->point_log_flags |= (uint8_t)((config->arc_mode != 0U) ?
-        RACE_LOG_FLAG_ARC_MODE : 0U);
+    (void)config;
 }
 
 /**
- * @brief Quickly ramp a Task4 high-speed base down to the stable Task3 base.
+ * @brief 将任务四高速基础 PWM 快速下滑到任务三稳定基础 PWM。
  */
 static int32_t race_task4_decel_base_pwm(int32_t fast_base_pwm,
     int32_t stable_base_pwm,
@@ -190,7 +181,7 @@ static int32_t race_task4_decel_base_pwm(int32_t fast_base_pwm,
 }
 
 /**
- * @brief Ramp Task4's first AC launch from a gentler start to full speed.
+ * @brief 任务四第一圈 AC 起步从较温和 PWM 斜坡升到全速。
  */
 static int32_t race_task4_first_ac_ramp_base_pwm(int32_t full_base_pwm,
     int32_t phase_distance_count)
@@ -215,7 +206,7 @@ static int32_t race_task4_first_ac_ramp_base_pwm(int32_t full_base_pwm,
 }
 
 /**
- * @brief Calculate line turn, yaw turn, wheel-speed PID, and final PWM values.
+ * @brief 计算巡线转向、航向转向、轮速差速闭环和最终 PWM。
  */
 static void race_compute_loop_control(race_context_t *ctx,
     const race_phase_config_t *config)
@@ -375,7 +366,7 @@ static void race_compute_loop_control(race_context_t *ctx,
 }
 
 /**
- * @brief Decide whether the current phase reached its normal task point.
+ * @brief 判断当前阶段是否到达正常点位。
  */
 static uint8_t race_check_phase_point(race_context_t *ctx,
     const race_phase_config_t *config)
@@ -408,7 +399,7 @@ static uint8_t race_check_phase_point(race_context_t *ctx,
 }
 
 /**
- * @brief Decide whether an AC/BD straight segment should force its point turn.
+ * @brief 判断 AC/BD 直线段是否需要按保护距离强制入弯。
  */
 static uint8_t race_check_straight_force_turn(const race_context_t *ctx,
     const race_phase_config_t *config)
@@ -438,106 +429,62 @@ static uint8_t race_check_straight_force_turn(const race_context_t *ctx,
 }
 
 /**
- * @brief Save high-rate race RAM samples around point windows.
- */
-static void race_log_loop_samples(race_context_t *ctx,
-    const race_phase_config_t *config)
-{
-    race_ram_log_segment_sample(ctx->ir_ok,
-        ctx->nav_ok,
-        &ctx->sample,
-        ctx->phase_distance_count,
-        ctx->line_turn,
-        ctx->nav_turn,
-        ctx->control_turn,
-        ctx->heading_error_cdeg,
-        ctx->gyro_z_mdps,
-        ctx->gyro_z_filtered_mdps,
-        ctx->nav_frame_delta,
-        ctx->nav_update_flags);
-
-    if (race_ram_window_should_log(ctx->lap_count,
-        ctx->phase_distance_count,
-        config->point_arm_count) != 0U) {
-        uint8_t window_log_flags = ctx->point_log_flags;
-
-        if (ctx->phase_distance_count <= RACE_RAM_WINDOW_AFTER_START_COUNT) {
-            window_log_flags |= RACE_LOG_FLAG_START_WINDOW;
-        }
-        race_ram_log_window_sample(ctx->lap_count,
-            ctx->phase,
-            ctx->ir_ok,
-            &ctx->sample,
-            ctx->edge_point_seen,
-            window_log_flags,
-            ctx->elapsed_ms,
-            ctx->phase_distance_count,
-            ctx->yaw_cdeg,
-            ctx->yaw_raw_cdeg,
-            ctx->phase_yaw_cdeg,
-            ctx->yaw_progress_cdeg,
-            ctx->expected_yaw_cdeg,
-            ctx->heading_error_cdeg,
-            ctx->nav_turn,
-            ctx->control_turn,
-            ctx->left_pwm,
-            ctx->right_pwm,
-            ctx->gyro_z_mdps,
-            ctx->gyro_z_filtered_mdps,
-            ctx->roll_cdeg,
-            ctx->pitch_cdeg,
-            ctx->nav_frame_delta,
-            ctx->nav_update_flags);
-    }
-}
-
-/**
- * @brief Record and optionally print the state captured at a phase point.
+ * @brief 处理阶段点位事件：触发声光，并在需要时输出串口诊断。
  */
 static void race_log_point_state(const race_context_t *ctx,
     const race_phase_config_t *config,
     uint8_t reason,
-    uint8_t event_type)
+    uint8_t normal_point)
 {
-    race_ram_log_segment_finish(reason,
-        ctx->elapsed_ms,
-        ctx->phase_distance_count,
-        ctx->yaw_cdeg,
-        ctx->yaw_progress_cdeg,
-        ctx->heading_error_cdeg,
-        ctx->ir_ok,
-        &ctx->sample,
-        ctx->point_log_flags);
-    race_ram_log_event(event_type,
-        reason,
+    st011_start_pulse(RACE_POINT_ALARM_MS);
+    race_log_printf("RACE point: lap=%u phase=%s kind=%s reason=%s t=%lu dist=%ld yaw=%ld yprog=%ld exp=%ld herr=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u B=%ld A=%ld\r\n",
         ctx->lap_count,
-        ctx->phase,
-        ctx->point_log_flags,
+        config->phase_name,
+        (normal_point != 0U) ? "point" : "force",
+        race_reason_name(reason),
         ctx->elapsed_ms,
-        ctx->phase_distance_count,
         ctx->phase_distance_count,
         ctx->yaw_cdeg,
         ctx->yaw_progress_cdeg,
-        ctx->phase_yaw_cdeg,
         ctx->expected_yaw_cdeg,
         ctx->heading_error_cdeg,
-        ctx->nav_turn,
-        ctx->gyro_z_filtered_mdps,
         ctx->ir_ok,
-        &ctx->sample,
+        (ctx->ir_ok != 0U) ? ctx->sample.raw : 0xFFU,
+        (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U,
+        (ctx->ir_ok != 0U) ? ctx->sample.active_count : 0U,
         ctx->motor_b_total,
         ctx->motor_a_total);
-    st011_start_pulse(RACE_POINT_ALARM_MS);
-
-    if (event_type == RACE_RAM_EVENT_POINT) {
-        race_post_point_context_begin(ctx->elapsed_ms, ctx->phase_distance_count);
-    }
-
-    (void)config;
 }
 
 /**
- * @brief Copy current loop state into ctx->result with the supplied reason.
+ * @brief 周期性竞速文本诊断钩子，默认由 RACE_UART_LOG_ENABLE 控制输出。
+ */
+static void race_log_periodic_data(race_context_t *ctx,
+    const race_phase_config_t *config)
+{
+    race_log_printf("%s t=%lu lap=%u dist=%ld nav=%u yaw=%ld exp=%ld herr=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u err=%ld line=%ld nav_turn=%ld turn=%ld pwm=%ld/%ld\r\n",
+        config->phase_name,
+        ctx->elapsed_ms,
+        ctx->lap_count,
+        ctx->phase_distance_count,
+        ctx->nav_ok,
+        ctx->yaw_cdeg,
+        ctx->expected_yaw_cdeg,
+        ctx->heading_error_cdeg,
+        ctx->ir_ok,
+        (ctx->ir_ok != 0U) ? ctx->sample.raw : 0xFFU,
+        (ctx->ir_ok != 0U) ? ctx->sample.line_mask : 0U,
+        (ctx->ir_ok != 0U) ? ctx->sample.active_count : 0U,
+        (ctx->ir_ok != 0U) ? ctx->sample.error : 0,
+        ctx->line_turn,
+        ctx->nav_turn,
+        ctx->control_turn,
+        ctx->left_pwm,
+        ctx->right_pwm);
+}
+
+/**
+ * @brief 按给定原因将当前循环状态复制到 ctx->result。
  */
 static void race_capture_result(race_context_t *ctx, uint8_t reason)
 {
@@ -551,7 +498,7 @@ static void race_capture_result(race_context_t *ctx, uint8_t reason)
 }
 
 /**
- * @brief Run the post-point action for AC, CB, BD, or DA.
+ * @brief 执行 AC、CB、BD、DA 点位后的转向/前进动作。
  */
 static uint8_t race_execute_point_action(const race_context_t *ctx)
 {
@@ -666,7 +613,7 @@ static uint8_t race_execute_point_action(const race_context_t *ctx)
 }
 
 /**
- * @brief Force an AC/BD straight entry: turn toward the arc, then drive until line appears.
+ * @brief AC/BD 直线保护触发后，先转向弧线方向，再前进找线。
  */
 static uint8_t race_execute_straight_force_turn_action(const race_context_t *ctx)
 {
@@ -742,7 +689,7 @@ static uint8_t race_execute_straight_force_turn_action(const race_context_t *ctx
 }
 
 /**
- * @brief Reset encoder/PID/filter state for the next race phase.
+ * @brief 为下一竞速阶段复位 PID、滤波和点位确认状态。
  */
 static void race_reset_segment_control(race_context_t *ctx)
 {
@@ -756,7 +703,7 @@ static void race_reset_segment_control(race_context_t *ctx)
 }
 
 /**
- * @brief Move the race state machine to the next phase or lap.
+ * @brief 将竞速状态机推进到下一阶段或下一圈。
  */
 static void race_advance_segment(race_context_t *ctx, uint8_t point_event)
 {
@@ -783,31 +730,16 @@ static void race_advance_segment(race_context_t *ctx, uint8_t point_event)
         race_reset_segment_control(ctx);
     }
 
-    race_ram_log_segment_reset(ctx->lap_count,
-        ctx->phase,
-        ctx->elapsed_ms,
-        ctx->yaw_start);
-    race_log_segment_start_snapshot(ctx->target_laps,
+    race_log_printf("RACE segment: lap=%u phase=%s t=%lu yaw0=%ld nav=%u\r\n",
         ctx->lap_count,
-        ctx->phase,
+        race_phase_name(ctx->phase),
         ctx->elapsed_ms,
-        ctx->nav_ok,
-        ctx->yaw_cdeg,
-        ctx->gyro_z_filtered_mdps);
+        ctx->yaw_start,
+        ctx->nav_ok);
 }
 
 /**
- * @brief Keep the loop call site stable after removing live UART reports.
- */
-static void race_log_periodic_data(race_context_t *ctx,
-    const race_phase_config_t *config)
-{
-    (void)ctx;
-    (void)config;
-}
-
-/**
- * @brief Start action: AB is zero, turn right to the configured AC heading.
+ * @brief 起跑对齐动作：以 AB 为零点，右转到配置的 AC 航向。
  */
 static uint8_t race_align_start_to_ac(const char *tag,
     int16_t motor_b_pwm,
@@ -842,7 +774,7 @@ static uint8_t race_align_start_to_ac(const char *tag,
 }
 
 /**
- * @brief Task3-only start action using its own tunable parameters.
+ * @brief 任务三专用起跑对齐动作，使用任务三独立调参项。
  */
 static uint8_t race_task3_align_start_to_ac(void)
 {
@@ -862,7 +794,7 @@ static uint8_t race_task3_align_start_to_ac(void)
 }
 
 /**
- * @brief Task4-only start action using its own tunable parameters.
+ * @brief 任务四专用起跑对齐动作，使用任务四独立调参项。
  */
 static uint8_t race_task4_align_start_to_ac(void)
 {
@@ -882,7 +814,7 @@ static uint8_t race_task4_align_start_to_ac(void)
 }
 
 /**
- * @brief Initialize the race context before Task3/Task4 starts.
+ * @brief 任务三/任务四启动前初始化竞速上下文。
  */
 static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
 {
@@ -921,38 +853,6 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
     race_diff_pid_reset(&ctx->diff_pid);
     race_read_navigation_state(ctx, 1U);
 
-    race_ram_log_reset();
-    race_ram_log_segment_reset(ctx->lap_count,
-        ctx->phase,
-        ctx->elapsed_ms,
-        ctx->yaw_start);
-    race_ram_log_event(RACE_RAM_EVENT_START,
-        0U,
-        ctx->lap_count,
-        ctx->phase,
-        0U,
-        ctx->elapsed_ms,
-        0,
-        0,
-        ctx->yaw_cdeg,
-        0,
-        0,
-        0,
-        0,
-        0,
-        ctx->gyro_z_filtered_mdps,
-        0U,
-        &ctx->sample,
-        0,
-        0);
-    race_log_segment_start_snapshot(ctx->target_laps,
-        ctx->lap_count,
-        ctx->phase,
-        ctx->elapsed_ms,
-        ctx->nav_ok,
-        ctx->yaw_cdeg,
-        ctx->gyro_z_filtered_mdps);
-
     {
         int32_t ac_target_cdeg = task4_mode ?
             RACE_TASK4_AC_HEADING_TARGET_CDEG :
@@ -987,7 +887,7 @@ static void race_init_lap_context(race_context_t *ctx, uint8_t target_laps)
 }
 
 /**
- * @brief Brake, determine final reason, log completion, and dump RAM logs.
+ * @brief 刹车、确定最终原因，并输出竞速结束诊断。
  */
 static void race_finish_lap_context(race_context_t *ctx)
 {
@@ -999,26 +899,14 @@ static void race_finish_lap_context(race_context_t *ctx)
         ctx->stop_reason = (ctx->lap_count >= ctx->target_laps) ? 1U :
             ((ctx->elapsed_ms >= RACE_TOTAL_MAX_RUN_MS) ? 4U : 2U);
     }
-    race_ram_log_event(RACE_RAM_EVENT_COMPLETE,
-        ctx->stop_reason,
+    race_log_printf("RACE stop: reason=%s laps=%u/%u phase=%s t=%lu yaw=%ld nav=%u\r\n",
+        race_reason_name(ctx->stop_reason),
         ctx->lap_count,
-        ctx->phase,
-        0U,
+        ctx->target_laps,
+        race_phase_name(ctx->phase),
         ctx->elapsed_ms,
-        0,
-        0,
         ctx->yaw_cdeg,
-        0,
-        0,
-        0,
-        0,
-        0,
-        ctx->gyro_z_filtered_mdps,
-        ctx->ir_ok,
-        &ctx->sample,
-        0,
-        0);
-    race_ram_log_dump(ctx->target_laps);
+        ctx->nav_ok);
 }
 
 #endif /* RACE_PHASE_H */

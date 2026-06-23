@@ -44,28 +44,28 @@
 #define STBY_OUT(X) ((X) ? (DL_GPIO_setPins(TB6612_PORT, TB6612_STBY_PIN)) : (DL_GPIO_clearPins(TB6612_PORT, TB6612_STBY_PIN)))
 
 /**
- * @brief Logical TB6612 motor channels.
+ * @brief TB6612 逻辑电机通道。
  *
- * In this car, motor A is the right wheel and motor B is the left wheel.
+ * 本车中 A 电机是右轮，B 电机是左轮。
  */
 typedef enum {
     TB6612_MOTOR_A = 0,
     TB6612_MOTOR_B = 1
 } tb6612_motor_t;
 
-/** Initialize the TB6612 driver into a safe stopped state. */
+/** 将 TB6612 初始化到安全停止状态。 */
 void TB6612_Init(void);
-/** Bring TB6612 out of standby. */
+/** 解除 TB6612 待机。 */
 void TB6612_Enable(void);
-/** Disable TB6612 output and clear PWM. */
+/** 关闭 TB6612 输出并清零 PWM。 */
 void TB6612_Disable(void);
-/** Actively brake both wheels. */
+/** 主动刹车两个车轮。 */
 void TB6612_Brake(void);
-/** Let both wheels coast with motor bridges off. */
+/** 关闭桥臂驱动，让两个车轮滑行。 */
 void TB6612_Coast(void);
-/** Set one motor speed; sign controls direction and magnitude controls PWM. */
+/** 设置单个电机速度；符号表示方向，绝对值表示 PWM。 */
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed);
-/** Set left/right wheel commands using the project's B-left/A-right wiring. */
+/** 按本工程 B 左轮、A 右轮接线设置左右轮命令。 */
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed);
 
 #endif /* 结束 _BSP_TB6612_H 头文件保护 */

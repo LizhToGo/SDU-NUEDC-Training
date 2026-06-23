@@ -4,6 +4,10 @@
 
 当前代码已经收敛到验收模式：固件只保留任务一、任务二、任务三、任务四入口。历史调试任务 05/06/07/08/10、Task6/Task8 测试头文件、轮速/红外调试模式入口均已从源码中移除。
 
+## 开源状态
+
+源码许可证：MIT License，见 [LICENSE](LICENSE)。
+
 ## 任务入口
 
 | 按键 / UART0 | 任务 | 入口函数 |
@@ -28,30 +32,26 @@ app_straight.h         # 差速直行闭环基础配置
 app_task_ids.c/.h      # UART/按键任务命令解析，仅 01..04 + 00
 straight/straight_line.h
                        # 任务一/任务二直线段
-turn/arc_segment.h     # 任务二弧线段
-race/race_laps.h       # 任务三/四跑圈主流程
-race/race_phase.h      # 任务三/四阶段状态、点位判定、阶段切换
+race/race_laps.h       # 任务三/四跑圈主流程；任务二 BC/DA 复用这里的竞速弧线阶段
+race/race_phase.h      # 竞速阶段状态、点位判定、阶段切换
 race/race_primitives.h # 入弯、出弯、强制找线、航向转向等运动原语
-race/race_log.h        # 任务三/四 RAM 日志
-race/task2_ram_log.h   # 任务二 RAM 日志
 tasks/task_sequences.h # 任务一/二顶层序列
 tasks/task_dispatcher.h# 任务调度器
 BSP/                   # TB6612、红外、JY62、编码器驱动
 Board/                 # UART printf、基础 delay
-tools/                 # 日志后处理工具
 docs/                  # 协作文档、调试说明、模块说明
 ```
 
 ## 构建
 
 ```powershell
-& "C:\ti\ccs2051\ccs\utils\bin\gmake.exe" -C Debug all
+gmake -C Debug all
 ```
 
 clean build：
 
 ```powershell
-& "C:\ti\ccs2051\ccs\utils\bin\gmake.exe" -C Debug clean all
+gmake -C Debug clean all
 ```
 
 不要手动修改 `Debug/` 下的 SysConfig/编译生成物、`.out`、`.map`、`.obj`。
@@ -64,7 +64,7 @@ clean build：
 |---|---|
 | `STRAIGHT_*` | 全局直线基础 PWM、直线 yaw 辅助修正 |
 | `TASK1_*` | 任务一 A->B 直线 |
-| `TASK2_*` | 任务二 AB/CD 直线、BC/DA 弧线、Task2 RAM 日志 |
+| `TASK2_*` | 任务二点位声光、CD 固定航向和 CD 到线使能 |
 | `TASK3_*` | 任务三几何、弧线、直线搜索、点位声光 |
 | `TASK4_*` | 任务四圈数和起步兼容参数 |
 | `RACE_*` | 任务三/四共享竞速路径实际控制参数 |
@@ -74,25 +74,14 @@ clean build：
 
 ## 日志
 
-- `TASK2_RAM_LOG_ENABLE`：任务二 RAM 日志。
-- `RACE_UART_LOG_ENABLE`：任务三/四实时文本日志，实车高速时谨慎开启。
-- `RACE_RAM_LOG_ENABLE`：任务三/四 RAM dump，当前复盘首选。
-
-日志整理脚本仍在 [tools/task11_log_to_csv.py](tools/task11_log_to_csv.py)。文件名保留历史名称，但已兼容当前 `RACE_*` RAM 日志。
+- 任务一/二默认输出直线或弧线段的串口文本诊断。
+- `RACE_UART_LOG_ENABLE`：任务三/四实时文本日志开关，实车高速时默认关闭，短时定位问题时再打开。
+- RAM 缓存日志和离线整理脚本已经删除，复盘以串口文本、视频、手工计时和实车成功率为准。
 
 ## 文档入口
 
 | 文档 | 内容 |
 |---|---|
 | [docs/串口调试与跑车流程.md](docs/串口调试与跑车流程.md) | 验收版串口命令、跑车流程、日志字段 |
-| [docs/任务三调试说明.md](docs/任务三调试说明.md) | 任务三路线和注意事项 |
-| [docs/任务四调试说明.md](docs/任务四调试说明.md) | 任务四竞速参数和 RAM 日志复盘 |
 | [docs/app_config宏定义说明.md](docs/app_config宏定义说明.md) | 当前宏分类说明 |
-| [docs/代码结构与协作说明.md](docs/代码结构与协作说明.md) | 模块边界和协作注意事项 |
-
-## Push 前检查
-
-1. 运行 `gmake -C Debug all`。
-2. 确认 UART ready 文案只显示 `01..04`。
-3. 确认日志/CSV/Debug 生成物没有误加入 Git。
-4. 若改动任务三/四参数，优先保留一份实车日志用于回退。
+| [docs/硬件接线说明.md](docs/硬件接线说明.md) | 当前硬件模块接线和 SysConfig 对应关系 |

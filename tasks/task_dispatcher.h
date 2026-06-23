@@ -3,11 +3,10 @@
 
 /**
  * @file task_dispatcher.h
- * @brief Blocking task selection and top-level task dispatch loop.
+ * @brief 阻塞式任务选择和顶层任务调度循环。
  *
- * Keeps UART/button task selection out of main.c. The concrete task routines
- * are included by main.c before this header so the generated firmware layout
- * remains header-only.
+ * 将 UART/按键任务选择从 main.c 中拆出。具体任务函数在 main.c
+ * 引入本头文件前已经可见，因此当前工程仍保持头文件式组织。
  */
 
 #include "app_config.h"
@@ -17,11 +16,11 @@
 #include "bsp_tb6612.h"
 
 /**
- * @brief Apply the small amount of per-task setup shared by button and UART starts.
+ * @brief 执行按键启动和 UART 启动共用的少量任务前准备。
  *
- * Task2 intentionally refreshes the yaw zero before starting. Task3/4 also
- * start one ST011 pulse here so button/UART starts are visibly acknowledged
- * before the shared race loop begins.
+ * 任务二启动前先刷新一次航向零点，随后 AB 直线段还会在起步声光和
+ * 稳定等待后再次确认零点；这样按键和串口启动路径都能得到同样的
+ * 航向参考。任务三/四会在这里启动一次 ST011 提示，再进入共享竞速循环。
  */
 static void prepare_task_start(task_id_t task_id)
 {
@@ -39,10 +38,9 @@ static void prepare_task_start(task_id_t task_id)
 }
 
 /**
- * @brief Dispatch a decoded task id to the corresponding high-level routine.
+ * @brief 将解析后的任务编号分发到对应顶层任务函数。
  *
- * This function is deliberately a thin switch-like table: it should not carry
- * control parameters for the tasks themselves.
+ * 该函数刻意保持为很薄的分发表，不承载各任务自身的控制参数。
  */
 static void run_selected_task(task_id_t task_id)
 {
@@ -62,10 +60,10 @@ static void run_selected_task(task_id_t task_id)
 }
 
 /**
- * @brief Block forever waiting for task commands and run the selected task.
+ * @brief 永久等待任务命令，并运行选中的任务。
  *
- * wait_task_uart_command() also polls the four physical task buttons, so this
- * loop is the single contest-mode entry point after boot.
+ * wait_task_uart_command() 同时轮询四个实体按键，因此该循环就是上电后
+ * 唯一的验收模式入口。
  */
 static void run_task_dispatcher(void)
 {

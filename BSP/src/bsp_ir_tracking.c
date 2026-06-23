@@ -8,7 +8,7 @@ static int16_t g_ir_tracking_last_error;
 
 /* 等待 I2C 控制器进入空闲状态。 */
 /**
- * @brief Wait until the I2C controller enters idle state.
+ * @brief 等待 I2C 控制器进入空闲状态。
  */
 static uint8_t IRTracking_WaitIdle(void)
 {
@@ -26,7 +26,7 @@ static uint8_t IRTracking_WaitIdle(void)
 
 /* 等待 I2C 总线释放。SDA/SCL 被外部拉住或模块异常时可能超时。 */
 /**
- * @brief Wait until the I2C bus is no longer busy.
+ * @brief 等待 I2C 总线释放。
  */
 static uint8_t IRTracking_WaitBusFree(void)
 {
@@ -44,7 +44,7 @@ static uint8_t IRTracking_WaitBusFree(void)
 
 /* 检查 I2C 控制器是否报告错误，例如无应答或总线错误。 */
 /**
- * @brief Return whether the I2C controller reports a bus error.
+ * @brief 返回 I2C 控制器是否报告总线错误。
  */
 static uint8_t IRTracking_HasBusError(void)
 {
@@ -58,7 +58,7 @@ static uint8_t IRTracking_HasBusError(void)
  * 多个探头同时压线时取平均值，所以中心两个探头 X4/X5 同时压线时结果为 0。
  */
 /**
- * @brief Calculate weighted line position from the normalized black-line mask.
+ * @brief 根据归一化黑线掩码计算加权线位置。
  */
 static int16_t IRTracking_CalculatePosition(uint8_t line_mask, uint8_t *active_count)
 {
@@ -87,7 +87,7 @@ static int16_t IRTracking_CalculatePosition(uint8_t line_mask, uint8_t *active_c
 }
 
 /**
- * @brief Reset the stored last-valid line error.
+ * @brief 复位保存的最近有效线误差。
  */
 void IRTracking_Init(void)
 {
@@ -96,7 +96,7 @@ void IRTracking_Init(void)
 }
 
 /**
- * @brief Perform the I2C write-register-address then read-one-byte transaction.
+ * @brief 执行“写寄存器地址后读 1 字节”的 I2C 事务。
  */
 uint8_t IRTracking_ReadRegister(uint8_t reg, uint8_t *value)
 {
@@ -138,7 +138,7 @@ uint8_t IRTracking_ReadRegister(uint8_t reg, uint8_t *value)
 }
 
 /**
- * @brief Read the IR module raw digital register.
+ * @brief 读取红外模块原始数字量寄存器。
  */
 uint8_t IRTracking_ReadRaw(uint8_t *raw)
 {
@@ -146,7 +146,7 @@ uint8_t IRTracking_ReadRaw(uint8_t *raw)
 }
 
 /**
- * @brief Map raw active-low X1..X8 bits into active-high bit0..bit7 mask.
+ * @brief 将低电平有效的 X1..X8 原始位映射为高电平有效的 bit0..bit7 掩码。
  */
 uint8_t IRTracking_RawToLineMask(uint8_t raw)
 {
@@ -170,7 +170,7 @@ uint8_t IRTracking_RawToLineMask(uint8_t raw)
 }
 
 /**
- * @brief Read raw state and fill a decoded tracking sample.
+ * @brief 读取原始状态并填充解析后的循迹采样。
  */
 uint8_t IRTracking_ReadSample(ir_tracking_sample_t *sample)
 {
@@ -207,7 +207,7 @@ uint8_t IRTracking_ReadSample(ir_tracking_sample_t *sample)
 }
 
 /**
- * @brief Return the most recent valid weighted line error.
+ * @brief 返回最近一次有效的加权线误差。
  */
 int16_t IRTracking_GetLastError(void)
 {
@@ -215,7 +215,7 @@ int16_t IRTracking_GetLastError(void)
 }
 
 /**
- * @brief Print one decoded IR tracking sample.
+ * @brief 打印一次解析后的红外循迹采样。
  */
 void IRTracking_PrintSample(const ir_tracking_sample_t *sample)
 {

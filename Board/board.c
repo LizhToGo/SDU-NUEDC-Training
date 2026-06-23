@@ -6,7 +6,7 @@
 #include "board.h"
 #include "ti/driverlib/m0p/dl_core.h"
 
-/* Shared printf buffer; keep UART log lines below this size. */
+/* 共享 printf 缓冲区；单行 UART 日志应控制在该长度内。 */
 static char g_uart_printf_buffer[512];
 
 /*
@@ -19,7 +19,7 @@ static char g_uart_printf_buffer[512];
  */
 
 /**
- * @brief Blocking transmit of one byte through UART0.
+ * @brief 通过 UART0 阻塞发送一个字节。
  */
 static void uart0_sendChar(uint8_t dat)
 {
@@ -32,7 +32,7 @@ static void uart0_sendChar(uint8_t dat)
 
 
 /**
- * @brief Blocking transmit of a NUL-terminated string through UART0.
+ * @brief 通过 UART0 阻塞发送一个以 NUL 结尾的字符串。
  */
 static void uart0_sendString(char* str)
 {
@@ -46,7 +46,7 @@ static void uart0_sendString(char* str)
 
 /* 将 C 标准库 printf 使用的 fputc 重定向到 UART0。 */
 /**
- * @brief Retarget C library putchar/printf output to UART0.
+ * @brief 将 C 标准库 putchar/printf 输出重定向到 UART0。
  */
 int fputc(int ch, FILE *f)
 {
@@ -57,7 +57,7 @@ int fputc(int ch, FILE *f)
 }
 
 /**
- * @brief Format one log line into a fixed buffer and send it through UART0.
+ * @brief 将一行日志格式化到固定缓冲区，再通过 UART0 发送。
  */
 int lc_printf(char* format,...)
 {
@@ -79,8 +79,8 @@ int lc_printf(char* format,...)
 
 /* ================ 延时函数封装 =================== */
 
-/** Busy-wait for microseconds using CPUCLK_FREQ. */
+/** 使用 CPUCLK_FREQ 忙等待指定微秒数。 */
 void delay_us(int __us) { delay_cycles( (CPUCLK_FREQ / 1000 / 1000)*__us); }
 
-/** Busy-wait for milliseconds using CPUCLK_FREQ. */
+/** 使用 CPUCLK_FREQ 忙等待指定毫秒数。 */
 void delay_ms(int __ms) { delay_cycles( (CPUCLK_FREQ / 1000)*__ms); }

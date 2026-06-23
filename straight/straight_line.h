@@ -3,11 +3,10 @@
 
 /**
  * @file straight_line.h
- * @brief Legacy straight-to-line controller used by Task1 and Task2.
+ * @brief 任务一和任务二共用的直线到线控制器。
  *
- * This module keeps the existing encoder differential drive, optional JY62
- * yaw correction, IR line stop, Task2 RAM logging, and UART logging behavior
- * that used to live directly in main.c.
+ * 本模块保留编码器差速闭环、可选 JY62 航向修正、红外到线停车
+ * 和串口文本诊断，把原先堆在 main.c 中的直线段逻辑集中到一处。
  */
 
 #include <stdint.h>
@@ -22,13 +21,12 @@
 #include "bsp_ir_tracking.h"
 #include "bsp_jy62.h"
 #include "bsp_tb6612.h"
-#include "race/task2_ram_log.h"
 
 /**
- * @brief Static configuration for one straight-to-line run.
+ * @brief 单次直线到线运行的静态配置。
  *
- * The same controller is used by Task1 and the straight parts of Task2.
- * Distance values are encoder counts; yaw values are centi-degrees.
+ * 任务一和任务二直线段共用这套控制器；距离单位为编码器计数，
+ * 航向单位为百分之一度。
  */
 typedef struct {
     const char *tag;
@@ -45,10 +43,10 @@ typedef struct {
 } straight_line_segment_config_t;
 
 /**
- * @brief Snapshot passed to the periodic straight-line log formatter.
+ * @brief 周期性直线诊断输出需要的状态快照。
  *
- * Keeping this as a parameter object prevents the control loop from knowing
- * whether the active log sink is UART text or Task2 RAM capture.
+ * 使用参数对象可以让主控制循环保持清爽，不需要在打印函数参数中
+ * 塞入一长串零散状态。
  */
 typedef struct {
     const straight_line_segment_config_t *config;
@@ -64,17 +62,16 @@ typedef struct {
     int32_t correction;
     int32_t motor_b_total;
     int32_t motor_a_total;
-    uint8_t task2_ram_mode;
     uint8_t ir_armed;
     uint8_t ir_ok;
     uint8_t nav_ok;
 } straight_line_report_t;
 
 /**
- * @brief Inputs needed for one differential-drive update.
+ * @brief 一次差速驱动更新所需的输入。
  *
- * This groups the raw encoder deltas/totals and current yaw target used by
- * straight_line_apply_drive_control().
+ * 将编码器增量/总量和当前航向目标打包，便于驱动控制函数只关注
+ * “如何算 PWM”。
  */
 typedef struct {
     uint32_t elapsed_ms;
@@ -90,13 +87,12 @@ typedef struct {
 } straight_line_control_input_t;
 
 /**
- * @brief Data printed or recorded when a straight segment starts.
+ * @brief 直线段启动时打印的诊断信息。
  */
 typedef struct {
     const straight_line_segment_config_t *config;
     const straight_drive_config_t *drive_config;
     const ir_tracking_sample_t *sample;
-    uint8_t task2_ram_mode;
     uint8_t nav_start_ok;
     uint32_t report_period_ms;
     int32_t yaw_start_cdeg;
@@ -105,7 +101,7 @@ typedef struct {
 } straight_line_start_log_t;
 
 /**
- * @brief Data printed or recorded when a straight segment stops.
+ * @brief 直线段结束时打印的诊断信息。
  */
 typedef struct {
     const straight_line_segment_config_t *config;
@@ -116,18 +112,16 @@ typedef struct {
     int32_t yaw_target_cdeg;
     int32_t motor_b_total;
     int32_t motor_a_total;
-    uint8_t task2_ram_mode;
     uint8_t stop_reason;
     uint8_t ir_ok;
     uint8_t stop_nav_ok;
 } straight_line_stop_log_t;
 
 /**
- * @brief Mutable runtime state for run_straight_to_line_segment().
+ * @brief 直线到线控制函数的运行期状态。
  *
- * The fields mirror the previous local variables in the control loop. They
- * are grouped so helper functions can update the loop state without changing
- * the timing, PID, yaw correction, or line-stop behavior.
+ * 这些字段对应控制循环里的局部变量。集中成结构体后，辅助函数可以
+ * 在不改变时序、PID、航向修正和到线停车行为的前提下更新状态。
  */
 typedef struct {
     uint32_t elapsed_ms;
@@ -151,7 +145,6 @@ typedef struct {
     uint8_t nav_start_ok;
     uint8_t stop_nav_ok;
     uint8_t stop_reason;
-    uint8_t task2_ram_mode;
     uint8_t ir_armed;
 } straight_line_runtime_t;
 
@@ -236,7 +229,7 @@ static const char *straight_line_stop_reason_name(uint8_t stop_reason)
 }
 
 /**
- * @brief Apply the optional start brake, alarm, settle delay, and yaw zero.
+ * @brief 执行起步前的刹车、声光、稳定等待和航向置零。
  */
 static void straight_line_prepare_start(
     const straight_line_segment_config_t *config)
@@ -259,10 +252,10 @@ static void straight_line_prepare_start(
 }
 
 /**
- * @brief Run the straight PID update and combine it with optional yaw feedback.
+ * @brief 运行直线差速 PID，并叠加可选的航向反馈。
  *
- * Positive final correction lowers B PWM and raises A PWM, matching the legacy
- * straight_drive_update() convention.
+ * 最终修正量为正时降低 B 轮 PWM、提高 A 轮 PWM，沿用
+ * straight_drive_update() 的历史约定。
  */
 static void straight_line_apply_drive_control(
     const straight_line_segment_config_t *config,
@@ -312,7 +305,7 @@ static void straight_line_apply_drive_control(
 }
 
 /**
- * @brief Check whether the IR line stop is armed and currently satisfied.
+ * @brief 判断红外到线停车是否已经使能且当前满足触发条件。
  */
 static uint8_t straight_line_detect_line_crossing(
     const straight_line_segment_config_t *config,
@@ -330,7 +323,7 @@ static uint8_t straight_line_detect_line_crossing(
 }
 
 /**
- * @brief Execute one control-period sensor read and motor PWM calculation.
+ * @brief 执行一个控制周期内的传感器读取和电机 PWM 计算。
  */
 static void straight_line_update_drive_step(
     const straight_line_segment_config_t *config,
@@ -377,28 +370,10 @@ static void straight_line_update_drive_step(
 }
 
 /**
- * @brief Emit the start record to either RAM log or UART.
+ * @brief 打印直线段启动诊断信息。
  */
 static void straight_line_log_start(const straight_line_start_log_t *log)
 {
-    if (log->task2_ram_mode != 0U) {
-        task2_ram_log_event(log->config->tag,
-            TASK2_EVT_START,
-            0U,
-            0U,
-            0,
-            log->yaw_start_cdeg,
-            abs_i32(normalize_cdeg(log->yaw_start_cdeg -
-                log->yaw_target_cdeg)),
-            0U,
-            log->sample,
-            log->nav_start_ok,
-            0U,
-            0,
-            0);
-        return;
-    }
-
     lc_printf("%s start: ctrl=task5 zero=%u ycorr=%u brake=%u rpt=%lu yaw0=%ld target=%ld fixed=%u B_base=%ld A_base=%ld ramp=%d/%d/%dms target_diff=%ld ff_gain=%ld ff_corr=%ld d_div=%ld d_max=%ld i_limit=%d corr_max=%ld arm=%ld force=%ld stop_min=%u nav0=%u\r\n",
         log->config->tag,
         log->config->zero_heading,
@@ -427,44 +402,10 @@ static void straight_line_log_start(const straight_line_start_log_t *log)
 }
 
 /**
- * @brief Emit one periodic straight-line sample to either RAM log or UART.
+ * @brief 打印一行周期性直线段诊断信息。
  */
 static void straight_line_log_report(const straight_line_report_t *report)
 {
-    if (report->task2_ram_mode != 0U) {
-        int32_t phase_yaw_cdeg = (report->nav_ok != 0U) ?
-            normalize_cdeg(report->nav->yaw_relative_cdeg -
-                report->yaw_start_cdeg) : 0;
-        int32_t heading_error_cdeg = (report->nav_ok != 0U) ?
-            normalize_cdeg(report->nav->yaw_relative_cdeg -
-                report->yaw_target_cdeg) : 0;
-
-        task2_ram_log_sample(report->config->tag,
-            report->elapsed_ms,
-            report->distance_count,
-            (report->nav_ok != 0U) ? report->nav->yaw_relative_cdeg : 0,
-            phase_yaw_cdeg,
-            abs_i32(phase_yaw_cdeg),
-            report->yaw_target_cdeg,
-            heading_error_cdeg,
-            (report->nav_ok != 0U) ? report->nav->gyro_z_filtered_mdps : 0,
-            report->ir_ok,
-            report->sample,
-            report->nav_ok,
-            report->ir_armed,
-            report->motor_b_total,
-            report->motor_a_total,
-            report->drive,
-            report->correction,
-            0,
-            report->yaw_correction,
-            report->correction,
-            report->drive_config->target_speed_diff,
-            report->drive->motor_b_pwm,
-            report->drive->motor_a_pwm);
-        return;
-    }
-
     lc_printf("%s t=%lu dist=%ld arm=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u yaw=%ld gzlp=%ld ycorr=%ld B_total=%ld A_total=%ld d_err=%ld d_corr=%ld B_spd=%ld A_spd=%ld v_tgt=%ld v_err=%ld P=%ld I=%ld D=%ld ff=%ld fb=%ld corr=%ld B_pwm=%ld A_pwm=%ld\r\n",
         report->config->tag,
         report->elapsed_ms,
@@ -498,7 +439,7 @@ static void straight_line_log_report(const straight_line_report_t *report)
 }
 
 /**
- * @brief Handle periodic straight-line logging counters.
+ * @brief 处理直线段周期性诊断计数器。
  */
 static void straight_line_log_runtime_report(
     const straight_line_segment_config_t *config,
@@ -523,7 +464,6 @@ static void straight_line_log_runtime_report(
             .correction = runtime->correction,
             .motor_b_total = runtime->motor_b_total,
             .motor_a_total = runtime->motor_a_total,
-            .task2_ram_mode = runtime->task2_ram_mode,
             .ir_armed = runtime->ir_armed,
             .ir_ok = runtime->ir_ok,
             .nav_ok = runtime->nav_ok
@@ -533,38 +473,17 @@ static void straight_line_log_runtime_report(
         straight_line_log_report(&report);
     }
 
-    if ((runtime->task2_ram_mode == 0U) &&
-        (runtime->jy62_report_elapsed_ms >= JY62_TASK_REPORT_PERIOD_MS)) {
+    if (runtime->jy62_report_elapsed_ms >= JY62_TASK_REPORT_PERIOD_MS) {
         runtime->jy62_report_elapsed_ms = 0;
         jy62_print_navigation_line(config->tag, runtime->elapsed_ms);
     }
 }
 
 /**
- * @brief Emit the stop record to either RAM log or UART.
+ * @brief 打印直线段结束诊断信息。
  */
 static void straight_line_log_stop(const straight_line_stop_log_t *log)
 {
-    if (log->task2_ram_mode != 0U) {
-        int32_t stop_heading_error_cdeg = (log->stop_nav_ok != 0U) ?
-            normalize_cdeg(log->nav->yaw_relative_cdeg -
-                log->yaw_target_cdeg) : 0;
-        task2_ram_log_event(log->config->tag,
-            (log->stop_reason == 1U) ? TASK2_EVT_POINT : TASK2_EVT_STOP,
-            log->stop_reason,
-            log->elapsed_ms,
-            log->distance_count,
-            (log->stop_nav_ok != 0U) ? log->nav->yaw_relative_cdeg : 0,
-            abs_i32(stop_heading_error_cdeg),
-            log->ir_ok,
-            log->sample,
-            log->stop_nav_ok,
-            (log->stop_reason == 1U) ? 1U : 0U,
-            log->motor_b_total,
-            log->motor_a_total);
-        return;
-    }
-
     lc_printf("%s stop: reason=%s t=%lu dist=%ld arm=%ld force=%ld raw=0x%02X mask=0x%02X cnt=%u lost=%u ir=%u nav=%u rel_cdeg=%ld B_total=%ld A_total=%ld\r\n",
         log->config->tag,
         straight_line_stop_reason_name(log->stop_reason),
@@ -584,14 +503,13 @@ static void straight_line_log_stop(const straight_line_stop_log_t *log)
 }
 
 /**
- * @brief Drive straight until a valid line hit, forced distance, stop command, or timeout.
+ * @brief 直行直到识别到线、到达保护距离、收到停车命令或超时。
  *
- * @return 1 for line stop, 2 for forced distance, 3 for UART stop, 0 for timeout.
+ * @return 1 表示到线停车，2 表示距离保护，3 表示串口停车，0 表示超时。
  */
 static uint8_t run_straight_to_line_segment(
     const straight_line_segment_config_t *config)
 {
-    const char *tag = config->tag;
     straight_pid_t pid;
     straight_drive_config_t drive_config;
     straight_drive_output_t drive = {0};
@@ -620,15 +538,12 @@ static uint8_t run_straight_to_line_segment(
 
     encoder_reset_distance_counts();
     encoder_enable_interrupts();
-    runtime.task2_ram_mode = task2_ram_enabled_for_tag(tag);
-    runtime.report_period_ms = (runtime.task2_ram_mode != 0U) ?
-        TASK2_STRAIGHT_RAM_LOG_PERIOD_MS : TASK1_REPORT_PERIOD_MS;
+    runtime.report_period_ms = TASK1_REPORT_PERIOD_MS;
     {
         const straight_line_start_log_t start_log = {
             .config = config,
             .drive_config = &drive_config,
             .sample = &sample,
-            .task2_ram_mode = runtime.task2_ram_mode,
             .nav_start_ok = runtime.nav_start_ok,
             .report_period_ms = runtime.report_period_ms,
             .yaw_start_cdeg = runtime.yaw_start_cdeg,
@@ -700,7 +615,6 @@ static uint8_t run_straight_to_line_segment(
             .yaw_target_cdeg = runtime.yaw_target_cdeg,
             .motor_b_total = runtime.motor_b_total,
             .motor_a_total = runtime.motor_a_total,
-            .task2_ram_mode = runtime.task2_ram_mode,
             .stop_reason = runtime.stop_reason,
             .ir_ok = runtime.ir_ok,
             .stop_nav_ok = runtime.stop_nav_ok

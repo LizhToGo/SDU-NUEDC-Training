@@ -2,7 +2,7 @@
 
 /* 将带符号速度命令转换为限幅后的 PWM 比较值。 */
 /**
- * @brief Convert a signed speed command to an absolute PWM compare value.
+ * @brief 将带符号速度命令转换为限幅后的 PWM 比较值。
  */
 static uint32_t TB6612_AbsClamp(int16_t speed)
 {
@@ -21,7 +21,7 @@ static uint32_t TB6612_AbsClamp(int16_t speed)
 
 /* A 电机使用 PWM 通道 C0，B 电机使用 PWM 通道 C1。 */
 /**
- * @brief Write the PWM compare register for one motor channel.
+ * @brief 写入单个电机通道的 PWM 比较寄存器。
  */
 static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
 {
@@ -38,7 +38,7 @@ static void TB6612_SetPwm(tb6612_motor_t motor, uint32_t pwm)
 
 /* 根据正反转方向设置 TB6612 某一路半桥的方向引脚电平。 */
 /**
- * @brief Set TB6612 direction pins for one motor.
+ * @brief 设置单个 TB6612 电机通道的方向引脚。
  */
 static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 {
@@ -71,7 +71,7 @@ static void TB6612_SetDirection(tb6612_motor_t motor, uint8_t forward)
 }
 
 /**
- * @brief Initialize the motor driver in a disabled/braked state.
+ * @brief 将电机驱动初始化到安全的待机/刹车状态。
  */
 void TB6612_Init(void)
 {
@@ -81,7 +81,7 @@ void TB6612_Init(void)
 }
 
 /**
- * @brief Enable TB6612 standby output.
+ * @brief 拉高 TB6612 STBY，使能驱动输出。
  */
 void TB6612_Enable(void)
 {
@@ -89,7 +89,7 @@ void TB6612_Enable(void)
 }
 
 /**
- * @brief Disable both PWM channels and put TB6612 in standby.
+ * @brief 关闭两路 PWM，并让 TB6612 进入待机。
  */
 void TB6612_Disable(void)
 {
@@ -99,7 +99,7 @@ void TB6612_Disable(void)
 }
 
 /**
- * @brief Actively brake both motor channels.
+ * @brief 主动刹车两个电机通道。
  */
 void TB6612_Brake(void)
 {
@@ -114,7 +114,7 @@ void TB6612_Brake(void)
 }
 
 /**
- * @brief Let both motor channels coast.
+ * @brief 让两个电机通道滑行。
  */
 void TB6612_Coast(void)
 {
@@ -129,7 +129,7 @@ void TB6612_Coast(void)
 }
 
 /**
- * @brief Set signed speed for one TB6612 motor channel.
+ * @brief 设置单个 TB6612 电机通道的带符号速度。
  */
 void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 {
@@ -166,7 +166,7 @@ void TB6612_SetMotor(tb6612_motor_t motor, int16_t speed)
 }
 
 /**
- * @brief Apply signed left/right wheel commands using B-left and A-right.
+ * @brief 按 B 左轮、A 右轮的接线应用左右轮命令。
  */
 void TB6612_SetDifferential(int16_t left_speed, int16_t right_speed)
 {

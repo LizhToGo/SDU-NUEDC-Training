@@ -3,10 +3,10 @@
 
 /**
  * @file task_sequences.h
- * @brief Top-level Task1 and Task2 contest sequences.
+ * @brief 任务一和任务二的顶层验收流程。
  *
- * Keeps the high-level task choreography out of main.c while preserving the
- * existing straight, arc, alarm, abort, and Task2 RAM dump behavior.
+ * 本文件只编排任务顺序，把直线、弧线、声光提示和异常退出处理
+ * 留在各自模块中，避免 main.c 继续堆叠业务逻辑。
  */
 
 #include <stdint.h>
@@ -15,13 +15,11 @@
 #include "app_services.h"
 #include "board.h"
 #include "bsp_tb6612.h"
-#include "race/race_laps.h"
-#include "race/task2_ram_log.h"
 #include "straight/straight_line.h"
-#include "turn/arc_segment.h"
+#include "race/race_laps.h"
 
 /**
- * @brief Execute Task1: A->B straight segment with start/finish alarms.
+ * @brief 执行任务一：A 到 B 直线，并带起点/终点声光提示。
  */
 static void run_task1_ab(void)
 {
@@ -43,51 +41,28 @@ static void run_task1_ab(void)
 }
 
 /**
- * @brief Emit a compact Task2 sequence-level event into the RAM log.
+ * @brief 任务二异常退出的统一收尾。
  */
-static void task2_log_sequence_event(const char *tag,
-    uint8_t event,
-    uint8_t reason)
+static void task2_abort_sequence(void)
 {
-    task2_ram_log_event(tag,
-        event,
-        reason,
-        0U,
-        0,
-        0,
-        0,
-        0U,
-        0,
-        0U,
-        0U,
-        0,
-        0);
-}
-
-/**
- * @brief Common Task2 abort path: record reason, finish alarm, dump RAM log.
- */
-static void task2_abort_sequence(const char *tag, uint8_t reason)
-{
-    task2_log_sequence_event(tag, TASK2_EVT_ABORT, reason);
     st011_finish_pending_pulse();
-    task2_ram_log_dump();
 }
 
 /**
- * @brief Execute Task2: AB straight, BC arc, CD straight, DA arc.
+ * @brief 执行任务二：AB 直线、BC 弧线、CD 直线、DA 弧线。
+ *
+ * 任务二不是完整复用任务三的整圈状态机，而是只把 BC/DA 两段接到竞速
+ * 弧线控制上；AB 与 CD 仍然按任务二路线单独执行直线到线。
  */
 static void run_task2_abcd(void)
 {
     uint8_t reason;
 
-    task2_ram_log_reset();
-    task2_log_sequence_event("TASK2_AB", TASK2_EVT_START, 0U);
-
     {
         const straight_line_segment_config_t config = {
             .tag = "TASK2_AB",
-            .zero_heading = 0U,
+            /* 任务二从 A 点起跑时重新建立相对航向零点，后续 CD 的 180° 目标才有明确参考。 */
+            .zero_heading = 1U,
             .start_alarm_ms = TASK1_START_ALARM_MS,
             .stop_alarm_ms = 0U,
             .line_arm_count = TASK1_B_LINE_ARM_COUNT,
@@ -102,36 +77,36 @@ static void run_task2_abcd(void)
         reason = run_straight_to_line_segment(&config);
     }
     if (reason != 1U) {
-        task2_abort_sequence("TASK2_AB", reason);
+        task2_abort_sequence();
         return;
     }
+    /* AB 成功到 B 后只启动非阻塞声光，不刹停，让车辆自然衔接进入 BC 弧线。 */
     st011_start_pulse(TASK2_POINT_ALARM_MS);
 
-    reason = run_task2_bc_race_arc_debug("TASK2_BC");
+    /* BC 只复用竞速弧线“跑到出弧点”的部分，出 C 后立即交给 CD 直线。 */
+    reason = run_task2_bc_race_arc("TASK2_BC");
     if (reason != 1U) {
-        task2_abort_sequence("TASK2_BC", reason);
+        task2_abort_sequence();
         return;
     }
 
+    /* CD 使用固定 180° 航向直线，到 D 点后再进入 DA 弧线。 */
     reason = run_task2_cd_exit_angle_straight("TASK2_CD");
     if (reason != 1U) {
-        task2_abort_sequence("TASK2_CD", reason);
+        task2_abort_sequence();
         return;
     }
     st011_start_pulse(TASK2_POINT_ALARM_MS);
 
-    task2_log_sequence_event("TASK2_CD", TASK2_EVT_COMPLETE, reason);
-
+    /* DA 回到 A 点后任务二结束，最后统一刹车和收尾声光。 */
     reason = run_task2_da_race_arc("TASK2_DA");
     if (reason != 1U) {
-        task2_abort_sequence("TASK2_DA", reason);
+        task2_abort_sequence();
         return;
     }
 
     TB6612_Brake();
-    task2_log_sequence_event("TASK2_DA", TASK2_EVT_COMPLETE, reason);
     st011_finish_pending_pulse();
-    task2_ram_log_dump();
 }
 
 #endif

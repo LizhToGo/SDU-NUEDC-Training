@@ -8,10 +8,10 @@
 #include "bsp_tb6612.h"
 
 /*
- * UART0 accepts two command styles:
- * - binary bytes: 0x01..0x04
- * - ASCII decimal pairs: "01".."04", optionally prefixed with 't'
- * Byte 0x00 is treated as STOP only when allow_binary_stop is enabled.
+ * UART0 支持两类命令格式：
+ * - 二进制字节：0x01..0x04
+ * - ASCII 十进制： "01".."04"，也允许前缀 't'
+ * 只有 allow_binary_stop 置位时，字节 0x00 才会被当成 STOP。
  */
 typedef struct {
     uint8_t value;
@@ -19,14 +19,14 @@ typedef struct {
 } task_uart_command_map_t;
 
 /**
- * @brief Small parser buffer for ASCII commands such as "03" and "t10".
+ * @brief 解析 "03"、"t10" 这类 ASCII 命令的小缓冲区。
  */
 typedef struct {
     uint8_t frame_buf[3];
     uint8_t frame_len;
 } task_uart_parse_state_t;
 
-/* Decimal command table shared by ASCII input paths. */
+/* 文本输入路径共用的十进制命令映射表。 */
 static const task_uart_command_map_t g_task_uart_number_map[] = {
     {0U, TASK_ID_STOP},
     {1U, TASK_ID_1},
@@ -35,7 +35,7 @@ static const task_uart_command_map_t g_task_uart_number_map[] = {
     {4U, TASK_ID_4},
 };
 
-/* Binary command table for raw UART bytes. */
+/* 原始 UART 字节使用的二进制命令映射表。 */
 static const task_uart_command_map_t g_task_uart_binary_map[] = {
     {0x01U, TASK_ID_1},
     {0x02U, TASK_ID_2},
@@ -44,7 +44,7 @@ static const task_uart_command_map_t g_task_uart_binary_map[] = {
 };
 
 /**
- * @brief Find a task id in one of the static UART command tables.
+ * @brief 在静态 UART 命令映射表中查找任务编号。
  */
 static task_id_t task_uart_lookup_command(
     const task_uart_command_map_t *map,
@@ -63,7 +63,7 @@ static task_id_t task_uart_lookup_command(
 }
 
 /**
- * @brief Reset the incremental ASCII parser state.
+ * @brief 复位增量式 ASCII 解析器状态。
  */
 static void task_uart_parse_reset(task_uart_parse_state_t *state)
 {
@@ -71,7 +71,7 @@ static void task_uart_parse_reset(task_uart_parse_state_t *state)
 }
 
 /**
- * @brief Return 1 for whitespace characters that terminate an ASCII command.
+ * @brief 遇到可结束 ASCII 命令的空白字符时返回 1。
  */
 static uint8_t task_uart_is_terminator(uint8_t ch)
 {
@@ -79,7 +79,7 @@ static uint8_t task_uart_is_terminator(uint8_t ch)
 }
 
 /**
- * @brief Return 1 while the parser has only seen the optional 't' prefix.
+ * @brief 解析器当前只看到可选前缀 't' 时返回 1。
  */
 static uint8_t task_uart_is_prefix_wait(const task_uart_parse_state_t *state)
 {
@@ -88,7 +88,7 @@ static uint8_t task_uart_is_prefix_wait(const task_uart_parse_state_t *state)
 }
 
 /**
- * @brief Convert two ASCII digits to a task id.
+ * @brief 将两个 ASCII 数字转换为任务编号。
  */
 static task_id_t task_uart_finish_decimal(uint8_t tens, uint8_t ones)
 {
@@ -98,7 +98,7 @@ static task_id_t task_uart_finish_decimal(uint8_t tens, uint8_t ones)
 }
 
 /**
- * @brief Convert a decimal command number into a task id.
+ * @brief 将十进制命令号转换为任务编号。
  */
 task_id_t task_uart_command_from_number(uint8_t number)
 {
@@ -108,7 +108,7 @@ task_id_t task_uart_command_from_number(uint8_t number)
 }
 
 /**
- * @brief Convert a raw binary command byte into a task id.
+ * @brief 将原始二进制命令字节转换为任务编号。
  */
 task_id_t task_uart_command_from_hex_byte(uint8_t value)
 {
@@ -118,7 +118,7 @@ task_id_t task_uart_command_from_hex_byte(uint8_t value)
 }
 
 /**
- * @brief Parse non-printable UART bytes, including binary task commands.
+ * @brief 解析不可打印 UART 字节，包括二进制任务命令。
  */
 static task_id_t task_uart_parse_control_byte(task_uart_parse_state_t *state,
     uint8_t ch)
@@ -139,7 +139,7 @@ static task_id_t task_uart_parse_control_byte(task_uart_parse_state_t *state,
 }
 
 /**
- * @brief Consume one decimal digit in the ASCII task command parser.
+ * @brief 在 ASCII 任务命令解析器中消费一个十进制数字。
  */
 static task_id_t task_uart_parse_decimal_digit(task_uart_parse_state_t *state,
     uint8_t ch)
@@ -175,7 +175,7 @@ static task_id_t task_uart_parse_decimal_digit(task_uart_parse_state_t *state,
 }
 
 /**
- * @brief Parse one UART byte and return a completed command if available.
+ * @brief 解析一个 UART 字节，如形成完整命令则返回该命令。
  */
 static task_id_t task_uart_parse_byte(task_uart_parse_state_t *state,
     uint8_t ch,
@@ -208,7 +208,7 @@ static task_id_t task_uart_parse_byte(task_uart_parse_state_t *state,
 }
 
 /**
- * @brief Poll UART0 until its FIFO is empty and return the first full command.
+ * @brief 轮询 UART0 直到 FIFO 为空，并返回遇到的第一个完整命令。
  */
 task_id_t task_uart_read_command(uint8_t allow_binary_stop)
 {
@@ -227,7 +227,7 @@ task_id_t task_uart_read_command(uint8_t allow_binary_stop)
 }
 
 /**
- * @brief Read one active-low button pin.
+ * @brief 读取一个低电平有效按键引脚。
  */
 static uint8_t task_button_pin_is_pressed(GPIO_Regs *port, uint32_t pin)
 {
@@ -235,7 +235,7 @@ static uint8_t task_button_pin_is_pressed(GPIO_Regs *port, uint32_t pin)
 }
 
 /**
- * @brief Convert the four physical task buttons into task ids.
+ * @brief 将四个实体任务按键转换为任务编号。
  */
 static task_id_t task_button_read(void)
 {
@@ -259,7 +259,7 @@ static task_id_t task_button_read(void)
 }
 
 /**
- * @brief Block until a UART command or debounced button press selects a task.
+ * @brief 阻塞等待 UART 命令或完成防抖的按键选择任务。
  */
 task_id_t wait_task_uart_command(void)
 {

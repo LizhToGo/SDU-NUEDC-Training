@@ -48,7 +48,7 @@
     (DL_UART_MAIN_INTERRUPT_RX | JY62_UART_ERROR_INTERRUPTS)
 
 /**
- * @brief Raw decoded JY62 frames plus parser/statistics counters.
+ * @brief JY62 原始解码帧、解析器状态和统计计数。
  */
 typedef struct {
     int16_t acc_raw[3];       /* 原始加速度：换算为 g 时 raw / 32768 * 16。 */
@@ -72,7 +72,7 @@ typedef struct {
 } jy62_sample_t;
 
 /**
- * @brief Navigation-friendly JY62 output used by car control code.
+ * @brief 小车控制代码使用的 JY62 导航友好输出。
  */
 typedef struct {
     int32_t yaw_cdeg;             /* 原始偏航角，单位 0.01 度，范围约为 -18000 到 +18000。 */
@@ -102,7 +102,7 @@ static uint8_t g_jy62_gyro_z_filter_valid;
 static jy62_sample_t g_jy62_sample;
 
 /**
- * @brief Convert little-endian frame bytes into signed int16.
+ * @brief 将小端帧字节转换为有符号 int16。
  */
 static int16_t JY62_MakeI16(uint8_t low, uint8_t high)
 {
@@ -110,7 +110,7 @@ static int16_t JY62_MakeI16(uint8_t low, uint8_t high)
 }
 
 /**
- * @brief Absolute value helper for JY62 calculations.
+ * @brief JY62 计算使用的绝对值辅助函数。
  */
 static int32_t JY62_Abs32(int32_t value)
 {
@@ -118,7 +118,7 @@ static int32_t JY62_Abs32(int32_t value)
 }
 
 /**
- * @brief Convert raw acceleration to milli-g.
+ * @brief 将原始加速度转换为 milli-g。
  */
 static int32_t JY62_RawToAccMg(int16_t raw)
 {
@@ -126,7 +126,7 @@ static int32_t JY62_RawToAccMg(int16_t raw)
 }
 
 /**
- * @brief Convert raw gyro reading to milli-degrees per second.
+ * @brief 将原始陀螺仪读数转换为 milli-degree/s。
  */
 static int32_t JY62_RawToGyroMdps(int16_t raw)
 {
@@ -134,7 +134,7 @@ static int32_t JY62_RawToGyroMdps(int16_t raw)
 }
 
 /**
- * @brief Convert raw angle reading to centi-degrees.
+ * @brief 将原始角度读数转换为百分之一度。
  */
 static int32_t JY62_RawToAngleCdeg(int16_t raw)
 {
@@ -142,7 +142,7 @@ static int32_t JY62_RawToAngleCdeg(int16_t raw)
 }
 
 /**
- * @brief Normalize a centi-degree angle into +/-180 degrees.
+ * @brief 将百分之一度角度归一化到正负 180 度范围。
  */
 static int32_t JY62_NormalizeAngleCdeg(int32_t angle_cdeg)
 {
@@ -156,7 +156,7 @@ static int32_t JY62_NormalizeAngleCdeg(int32_t angle_cdeg)
 }
 
 /**
- * @brief Print a signed fixed-point value without using floating point.
+ * @brief 不使用浮点数打印带符号定点数。
  */
 static void JY62_PrintSignedFixed(int32_t value, uint16_t scale, uint8_t digits)
 {
@@ -176,7 +176,7 @@ static void JY62_PrintSignedFixed(int32_t value, uint16_t scale, uint8_t digits)
 }
 
 /**
- * @brief Verify the JY62 10-byte sum checksum.
+ * @brief 校验 JY62 10 字节帧的累加和。
  */
 static uint8_t JY62_ChecksumOk(const uint8_t *frame)
 {
@@ -191,7 +191,7 @@ static uint8_t JY62_ChecksumOk(const uint8_t *frame)
 }
 
 /**
- * @brief Recover parser alignment after a bad or partial frame.
+ * @brief 在错误帧或半帧后恢复解析器对齐。
  */
 static void JY62_ResyncFrame(void)
 {
@@ -216,7 +216,7 @@ static void JY62_ResyncFrame(void)
 }
 
 /**
- * @brief Store recent raw bytes for UART/protocol diagnostics.
+ * @brief 保存最近原始字节，用于 UART 和协议诊断。
  */
 static void JY62_SaveRecentByte(uint8_t data)
 {
@@ -232,7 +232,7 @@ static void JY62_SaveRecentByte(uint8_t data)
 }
 
 /**
- * @brief Decode one checksum-valid JY62 frame into the sample cache.
+ * @brief 将一帧校验通过的 JY62 数据解码到采样缓存。
  */
 static void JY62_ParseFrame(const uint8_t *frame)
 {
@@ -294,7 +294,7 @@ static void JY62_ParseFrame(const uint8_t *frame)
 }
 
 /**
- * @brief Feed one UART byte into the JY62 frame parser.
+ * @brief 将一个 UART 字节送入 JY62 帧解析器。
  */
 static void JY62_PushByte(uint8_t data)
 {
@@ -327,7 +327,7 @@ static void JY62_PushByte(uint8_t data)
 }
 
 /**
- * @brief Drain UART1 RX FIFO and push every byte into the parser.
+ * @brief 清空 UART1 RX FIFO，并把每个字节送入解析器。
  */
 static void JY62_DrainRxFifo(void)
 {
@@ -337,7 +337,7 @@ static void JY62_DrainRxFifo(void)
 }
 
 /**
- * @brief Record UART1 hardware error counters.
+ * @brief 记录 UART1 硬件错误计数。
  */
 static void JY62_RecordUartError(uint8_t is_overrun)
 {
@@ -348,7 +348,7 @@ static void JY62_RecordUartError(uint8_t is_overrun)
 }
 
 /**
- * @brief Enable UART1 RX and error interrupts for JY62.
+ * @brief 使能 JY62 使用的 UART1 接收和错误中断。
  */
 static void JY62_EnableRxInterrupt(void)
 {
@@ -368,7 +368,7 @@ static void JY62_EnableRxInterrupt(void)
 }
 
 /**
- * @brief Reset parser/cache state and enable JY62 UART receiving.
+ * @brief 复位解析器/缓存状态，并开启 JY62 UART 接收。
  */
 static void JY62_Init(void)
 {
@@ -409,7 +409,7 @@ static void JY62_Init(void)
 }
 
 /**
- * @brief Poll accumulated parser state into a raw sample snapshot.
+ * @brief 将累计解析器状态轮询为原始采样快照。
  */
 static uint32_t JY62_Poll(jy62_sample_t *sample)
 {
@@ -428,7 +428,7 @@ static uint32_t JY62_Poll(jy62_sample_t *sample)
 }
 
 /**
- * @brief Set the current yaw as software zero when angle data is valid.
+ * @brief 角度数据有效时，将当前 yaw 设置为软件零点。
  */
 static void JY62_SetYawZeroToCurrent(void)
 {
@@ -439,7 +439,7 @@ static void JY62_SetYawZeroToCurrent(void)
 }
 
 /**
- * @brief Poll and convert JY62 data into navigation fields for controllers.
+ * @brief 轮询并转换 JY62 数据，生成控制器使用的导航字段。
  */
 static uint32_t JY62_GetNavigation(jy62_navigation_t *nav)
 {
@@ -482,7 +482,7 @@ static uint32_t JY62_GetNavigation(jy62_navigation_t *nav)
 }
 
 /**
- * @brief Read navigation fields without resetting update-frame accounting.
+ * @brief 读取导航字段，但不重置更新帧计数。
  */
 static uint8_t JY62_PeekNavigation(jy62_navigation_t *nav)
 {
@@ -521,7 +521,7 @@ static uint8_t JY62_PeekNavigation(jy62_navigation_t *nav)
 }
 
 /**
- * @brief UART1 ISR entry used by main.c to service JY62 bytes/errors.
+ * @brief main.c 调用的 UART1 中断入口，用于处理 JY62 字节和错误。
  */
 static void JY62_UART1_IRQHandler(void)
 {
@@ -576,7 +576,7 @@ static void JY62_UART1_IRQHandler(void)
 }
 
 /**
- * @brief Print raw decoded JY62 sample values for diagnostics.
+ * @brief 打印 JY62 原始解码采样值，用于诊断。
  */
 static void JY62_PrintSample(const jy62_sample_t *sample)
 {
@@ -598,7 +598,7 @@ static void JY62_PrintSample(const jy62_sample_t *sample)
 }
 
 /**
- * @brief Print navigation-friendly JY62 values for diagnostics.
+ * @brief 打印面向导航控制的 JY62 值，用于诊断。
  */
 static void JY62_PrintNavigation(const jy62_navigation_t *nav)
 {
@@ -613,7 +613,7 @@ static void JY62_PrintNavigation(const jy62_navigation_t *nav)
 }
 
 /**
- * @brief Print the recent raw UART byte ring buffer.
+ * @brief 打印最近原始 UART 字节环形缓冲区。
  */
 static void JY62_PrintRecentRaw(const jy62_sample_t *sample)
 {

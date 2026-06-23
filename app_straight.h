@@ -8,9 +8,9 @@
 #include "app_motion_utils.h"
 
 /**
- * @brief Tunable parameters for encoder differential straight driving.
+ * @brief 编码器差速直行控制的可调参数。
  *
- * Positive correction lowers B PWM and raises A PWM in the current wiring.
+ * 当前接线下，正修正量会降低 B 轮 PWM、提高 A 轮 PWM。
  */
 typedef struct {
     int32_t base_b_pwm;
@@ -25,7 +25,7 @@ typedef struct {
 } straight_drive_config_t;
 
 /**
- * @brief Encoder input snapshot for one control period.
+ * @brief 一个控制周期内的编码器输入快照。
  */
 typedef struct {
     int32_t motor_b_delta;
@@ -35,7 +35,7 @@ typedef struct {
 } straight_drive_input_t;
 
 /**
- * @brief Full calculated output of one straight-drive PID update.
+ * @brief 一次直行差速 PID 更新得到的完整输出。
  */
 typedef struct {
     int32_t motor_b_speed;
@@ -56,7 +56,7 @@ typedef struct {
 } straight_drive_output_t;
 
 /**
- * @brief Fill a straight-drive config from shared base PWM and supplied gains.
+ * @brief 使用共享基础 PWM 和传入增益填充直行配置。
  */
 static inline void straight_drive_apply_test_config(straight_drive_config_t *config,
     int32_t target_speed_diff,
@@ -77,7 +77,7 @@ static inline void straight_drive_apply_test_config(straight_drive_config_t *con
 }
 
 /**
- * @brief Load the PID-test straight-drive parameter set.
+ * @brief 加载历史 PID_TEST 直行参数组。
  */
 static inline void straight_drive_config_pid_test(straight_drive_config_t *config)
 {
@@ -90,7 +90,7 @@ static inline void straight_drive_config_pid_test(straight_drive_config_t *confi
 }
 
 /**
- * @brief Load the PD-test straight-drive parameter set.
+ * @brief 加载历史 PD_TEST 直行参数组。
  */
 static inline void straight_drive_config_pd_test(straight_drive_config_t *config)
 {
@@ -103,8 +103,8 @@ static inline void straight_drive_config_pd_test(straight_drive_config_t *config
 }
 
 /*
- * Feedforward correction for the expected B-A wheel-speed bias.
- * Unit: PWM correction count. Positive correction lowers B PWM and raises A PWM.
+ * 目标 B-A 轮速差对应的前馈修正。
+ * 单位是 PWM 修正量；正修正会降低 B 轮 PWM、提高 A 轮 PWM。
  */
 static inline int32_t straight_drive_feedforward(const straight_drive_config_t *config)
 {
@@ -116,7 +116,7 @@ static inline int32_t straight_drive_feedforward(const straight_drive_config_t *
 }
 
 /**
- * @brief Update straight-drive correction from a grouped encoder snapshot.
+ * @brief 根据打包后的编码器快照更新直行修正量。
  */
 static inline void straight_drive_update_from_input(straight_pid_t *pid,
     const straight_drive_config_t *config,
@@ -158,7 +158,7 @@ static inline void straight_drive_update_from_input(straight_pid_t *pid,
 }
 
 /**
- * @brief Convenience wrapper for straight_drive_update_from_input().
+ * @brief 直行底层更新函数的便捷包装。
  */
 static inline void straight_drive_update(straight_pid_t *pid,
     const straight_drive_config_t *config,

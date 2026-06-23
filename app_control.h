@@ -7,7 +7,7 @@
 
 /* 直行 PID 状态。系数使用整数定点，最终统一除以 STRAIGHT_PID_SCALE。 */
 /**
- * @brief Integer PID state for wheel-speed difference control.
+ * @brief 轮速差控制使用的整数 PID 状态。
  */
 typedef struct {
     int32_t kp;
@@ -21,7 +21,7 @@ typedef struct {
 
 /* 航向经验滤波状态，用来抑制车身短时晃动带来的 JY62 误修正。 */
 /**
- * @brief Low-pass filter state for heading correction.
+ * @brief 航向修正使用的一阶低通滤波状态。
  */
 typedef struct {
     int32_t filtered_cdeg;
@@ -53,7 +53,7 @@ static inline int32_t ramp_i32(int32_t start_value, int32_t target_value, uint32
 }
 
 /**
- * @brief Absolute value helper for signed 32-bit integers.
+ * @brief 有符号 32 位整数绝对值辅助函数。
  */
 static inline int32_t abs_i32(int32_t value)
 {
@@ -73,7 +73,7 @@ static inline void straight_pid_reset(straight_pid_t *pid)
 }
 
 /**
- * @brief Override PID integral and output limits after reset.
+ * @brief PID 复位后覆盖积分限幅和输出限幅。
  */
 static inline void straight_pid_set_limits(straight_pid_t *pid,
     int32_t i_limit,
@@ -85,7 +85,7 @@ static inline void straight_pid_set_limits(straight_pid_t *pid,
 }
 
 /**
- * @brief Reset heading low-pass filter state.
+ * @brief 复位航向低通滤波状态。
  */
 static inline void heading_filter_reset(heading_filter_t *filter)
 {
@@ -95,7 +95,7 @@ static inline void heading_filter_reset(heading_filter_t *filter)
 
 /* 根据 Z 轴角速度给航向修正降权：慢速偏航保留，高速晃动逐步压掉。 */
 /**
- * @brief Reduce heading correction gain when gyro motion is too large.
+ * @brief Z 轴角速度过大时降低航向修正增益。
  */
 static inline int32_t heading_filter_gain_from_gyro(int32_t gyro_z_filtered_mdps)
 {
@@ -120,7 +120,7 @@ static inline int32_t heading_filter_gain_from_gyro(int32_t gyro_z_filtered_mdps
  * 3. 小于死区的误差直接归零，避免小抖动来回打方向。
  */
 /**
- * @brief Low-pass and gate raw heading error before yaw correction.
+ * @brief 航向修正前，对原始航向误差做低通、死区和晃动门控。
  */
 static inline int32_t heading_filter_update(heading_filter_t *filter,
     int32_t raw_heading_cdeg,
@@ -160,7 +160,7 @@ static inline int32_t heading_filter_update(heading_filter_t *filter,
  * correction 为正表示 B 轮相对目标偏快，因此会降低 B 轮 PWM、提高 A 轮 PWM。
  */
 /**
- * @brief Update wheel-speed-difference PID and return PWM correction.
+ * @brief 更新轮速差 PID，并返回 PWM 修正量。
  */
 static inline int32_t straight_pid_update(straight_pid_t *pid,
     int32_t motor_b_speed,

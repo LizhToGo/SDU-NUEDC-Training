@@ -1,0 +1,24 @@
+# 文本文件统一按 LF 存储，避免不同系统反复改换行。
+* text=auto eol=lf
+
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.syscfg text eol=lf
+*.project text eol=lf
+*.cproject text eol=lf
+*.ccsproject text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+
+# Office/PDF 资料按二进制处理，避免 Git 尝试文本归一化。
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+
+# 固件和调试产物即使被误加入，也按二进制处理。
+*.out binary
+*.elf binary
+*.hex binary
+*.bin binary

@@ -38,8 +38,6 @@
                                     <listOptionValue value="${SYSCONFIG_TOOL_INCLUDE_PATH}"/>
                                     <listOptionValue value="${PROJECT_ROOT}"/>
                                     <listOptionValue value="${PROJECT_ROOT}/race"/>
-                                    <listOptionValue value="${PROJECT_ROOT}/heading"/>
-                                    <listOptionValue value="${PROJECT_ROOT}/turn"/>
                                     <listOptionValue value="${PROJECT_ROOT}/Board"/>
                                     <listOptionValue value="${PROJECT_ROOT}/BSP"/>
                                     <listOptionValue value="${PROJECT_ROOT}/BSP/inc"/>

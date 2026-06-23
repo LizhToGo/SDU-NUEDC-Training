@@ -20,7 +20,7 @@ static volatile uint8_t g_motor_b_encoder_state;
 
 /* 读取编码器 A/B 两相，压缩成 2 bit 状态：A 相为 bit1，B 相为 bit0。 */
 /**
- * @brief Read the two encoder phase pins and pack them into a 2-bit state.
+ * @brief 读取编码器两相引脚，并压缩成 2 bit 状态。
  */
 static uint8_t encoder_read_state(uint32_t pin_a, uint32_t pin_b)
 {
@@ -44,7 +44,7 @@ static uint8_t encoder_read_state(uint32_t pin_a, uint32_t pin_b)
  * 所有 2 bit 到 2 bit 的跳变都会映射为 -1、0 或 +1。
  */
 /**
- * @brief Decode one quadrature transition into -1, 0, or +1 count.
+ * @brief 将一次正交编码器跳变解码为 -1、0 或 +1 计数。
  */
 static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
 {
@@ -60,7 +60,7 @@ static int8_t encoder_decode_delta(uint8_t previous, uint8_t current)
 
 /* B 电机编码器发生 GPIO 中断时调用。 */
 /**
- * @brief Shared GPIO interrupt update for one motor encoder.
+ * @brief 单个电机编码器的共享 GPIO 中断更新逻辑。
  */
 static void encoder_update_motor(volatile int32_t *count,
     volatile uint8_t *state,
@@ -76,7 +76,7 @@ static void encoder_update_motor(volatile int32_t *count,
 }
 
 /**
- * @brief Update left/B motor encoder count from GPIO interrupt context.
+ * @brief 在 GPIO 中断上下文中更新左轮/B 电机编码器计数。
  */
 static void encoder_update_motor_b(void)
 {
@@ -89,7 +89,7 @@ static void encoder_update_motor_b(void)
 
 /* A 电机编码器发生 GPIO 中断时调用。 */
 /**
- * @brief Update right/A motor encoder count from GPIO interrupt context.
+ * @brief 在 GPIO 中断上下文中更新右轮/A 电机编码器计数。
  */
 static void encoder_update_motor_a(void)
 {
@@ -101,7 +101,7 @@ static void encoder_update_motor_a(void)
 }
 
 /**
- * @brief Clear counts and refresh both encoder phase baselines.
+ * @brief 清空计数并刷新两个编码器的相位基线。
  */
 static void encoder_reset_all_state(void)
 {
@@ -114,7 +114,7 @@ static void encoder_reset_all_state(void)
 }
 
 /**
- * @brief Clear pending GPIO interrupt flags for all encoder pins.
+ * @brief 清除所有编码器引脚的待处理 GPIO 中断标志。
  */
 static void encoder_clear_all_interrupts(void)
 {
@@ -125,7 +125,7 @@ static void encoder_clear_all_interrupts(void)
 
 /* 在开启 GPIO 中断前读取编码器初始状态。 */
 /**
- * @brief Initialize encoder runtime state before enabling interrupts.
+ * @brief 开启中断前初始化编码器运行状态。
  */
 static void encoder_init_runtime(void)
 {
@@ -135,7 +135,7 @@ static void encoder_init_runtime(void)
 
 /* 编码器初始状态有效后，开启 GPIOA 分组中断。 */
 /**
- * @brief Enable the shared encoder GPIO interrupt group.
+ * @brief 使能共享的编码器 GPIO 中断组。
  */
 static void encoder_enable_interrupts(void)
 {
@@ -148,7 +148,7 @@ static void encoder_enable_interrupts(void)
  * 读取 volatile 计数器时会短暂关中断，避免读到一半被中断打断。
  */
 /**
- * @brief Atomically snapshot volatile encoder totals.
+ * @brief 原子读取 volatile 编码器累计计数。
  */
 static void encoder_snapshot_counts(int32_t *motor_b_count, int32_t *motor_a_count)
 {
@@ -159,7 +159,7 @@ static void encoder_snapshot_counts(int32_t *motor_b_count, int32_t *motor_a_cou
 }
 
 /**
- * @brief Return encoder deltas since the last call.
+ * @brief 返回距离上一次调用以来的编码器增量。
  */
 static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
@@ -177,7 +177,7 @@ static void encoder_get_delta_counts(int32_t *motor_b_delta, int32_t *motor_a_de
 }
 
 /**
- * @brief Return current cumulative encoder totals.
+ * @brief 返回当前编码器累计计数。
  */
 static void encoder_get_total_counts(int32_t *motor_b_total, int32_t *motor_a_total)
 {
@@ -185,7 +185,7 @@ static void encoder_get_total_counts(int32_t *motor_b_total, int32_t *motor_a_to
 }
 
 /**
- * @brief Reset distance totals and clear the delta baseline.
+ * @brief 复位距离累计计数，并清空增量基线。
  */
 static void encoder_reset_distance_counts(void)
 {
@@ -201,7 +201,7 @@ static void encoder_reset_distance_counts(void)
 
 /* 在固定时间窗口内测量编码器变化量，用于可选的编码器自检。 */
 /**
- * @brief Measure encoder movement over a fixed blocking time window.
+ * @brief 在固定阻塞时间窗口内测量编码器运动量。
  */
 static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32_t *motor_a_delta)
 {
@@ -222,7 +222,7 @@ static int32_t encoder_measure_for_ms(uint32_t ms, int32_t *motor_b_delta, int32
 }
 
 /**
- * @brief Spin one motor command and report which encoder moved.
+ * @brief 转动单个电机命令，并报告哪个编码器产生计数。
  */
 static uint8_t encoder_test_single_motor(const char *label,
     int16_t motor_b_pwm,
@@ -254,7 +254,7 @@ static uint8_t encoder_test_single_motor(const char *label,
  * 每次只转一个电机，检查对应编码器是否有计数。
  */
 /**
- * @brief Optional wiring self-test for both motor/encoder pairs.
+ * @brief 对两组电机/编码器执行可选接线自检。
  */
 static uint8_t encoder_motor_self_test(void)
 {

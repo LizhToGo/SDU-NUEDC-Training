@@ -5,11 +5,11 @@
 #include "app_task_ids.h"
 #include "board.h"
 
-/* Remaining duration for the currently active ST011 pulse. */
+/* 当前 ST011 非阻塞脉冲还需要保持的时间。 */
 static uint32_t g_st011_pulse_remaining_ms;
 
 /**
- * @brief Drive the ST011 trigger pin according to the configured polarity.
+ * @brief 按配置的触发极性驱动 ST011 引脚。
  */
 void st011_set_active(uint8_t active)
 {
@@ -29,7 +29,7 @@ void st011_set_active(uint8_t active)
 }
 
 /**
- * @brief Decrease pending pulse time and switch the ST011 output off at zero.
+ * @brief 扣减待完成脉冲时间，归零时关闭 ST011 输出。
  */
 void st011_service(uint32_t elapsed_ms)
 {
@@ -46,7 +46,7 @@ void st011_service(uint32_t elapsed_ms)
 }
 
 /**
- * @brief Delay in chunks so a pending ST011 pulse can finish at the right time.
+ * @brief 分片延时，确保等待期间 ST011 非阻塞脉冲能准时结束。
  */
 void delay_ms_with_st011(uint32_t total_ms)
 {
@@ -65,7 +65,7 @@ void delay_ms_with_st011(uint32_t total_ms)
 }
 
 /**
- * @brief Begin a non-blocking sound/light pulse.
+ * @brief 启动一次非阻塞声光脉冲。
  */
 void st011_start_pulse(uint32_t pulse_ms)
 {
@@ -78,7 +78,7 @@ void st011_start_pulse(uint32_t pulse_ms)
 }
 
 /**
- * @brief Emit one blocking sound/light pulse.
+ * @brief 启动一次阻塞声光脉冲，并等待其结束。
  */
 void st011_pulse(uint32_t pulse_ms)
 {
@@ -87,7 +87,7 @@ void st011_pulse(uint32_t pulse_ms)
 }
 
 /**
- * @brief Block until the current non-blocking sound/light pulse has completed.
+ * @brief 等待当前非阻塞声光脉冲结束。
  */
 void st011_finish_pending_pulse(void)
 {
@@ -97,7 +97,7 @@ void st011_finish_pending_pulse(void)
 }
 
 /**
- * @brief Check UART0 for an in-run stop command without consuming task starts.
+ * @brief 检查 UART0 是否收到运行中停车命令，不消费新的任务启动命令。
  */
 uint8_t task_uart_stop_requested(void)
 {

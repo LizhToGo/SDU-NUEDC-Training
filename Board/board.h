@@ -14,15 +14,15 @@
 
 /* 使用可变参数实现的类 printf 串口打印函数，底层通过 UART0 阻塞发送。 */
 /**
- * @brief printf-like blocking UART0 output helper.
+ * @brief 类 printf 的 UART0 阻塞输出辅助函数。
  */
 int lc_printf(char* format,...);
 
 /* 忙等待延时函数，时钟频率来自 SysConfig 生成的 CPUCLK_FREQ。 */
-/** Busy-wait for a number of microseconds. */
+/** 忙等待指定微秒数。 */
 void delay_us(int __us);
 
-/** Busy-wait for a number of milliseconds. */
+/** 忙等待指定毫秒数。 */
 void delay_ms(int __ms);
 
 #endif

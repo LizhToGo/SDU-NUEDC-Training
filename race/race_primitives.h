@@ -3,9 +3,9 @@
 
 /**
  * @file race_primitives.h
- * @brief Race control primitive actions and math helpers.
+ * @brief 竞速控制原语和数学辅助函数。
  *
- * This header is included from race_laps.h after race_context_t-related helpers are declared.
+ * 本头文件在 race_laps.h 声明竞速上下文相关辅助类型后引入。
  */
 
 #include <stdint.h>
@@ -22,7 +22,7 @@
 #include "bsp_tb6612.h"
 
 /**
- * @brief Read current relative yaw and filtered gyro-Z from JY62.
+ * @brief 从 JY62 读取当前相对航向和滤波后的 Z 轴角速度。
  */
 static uint8_t race_peek_yaw(int32_t *yaw_cdeg, int32_t *gyro_z_filtered_mdps)
 {
@@ -41,7 +41,7 @@ static uint8_t race_peek_yaw(int32_t *yaw_cdeg, int32_t *gyro_z_filtered_mdps)
 }
 
 /**
- * @brief Reset the race differential wheel-speed PID gains.
+ * @brief 复位竞速差速轮速 PID 参数。
  */
 static void race_diff_pid_reset(straight_pid_t *pid)
 {
@@ -56,7 +56,7 @@ static void race_diff_pid_reset(straight_pid_t *pid)
 }
 
 /**
- * @brief Configure race straight/arc drive base PWM and target speed bias.
+ * @brief 配置竞速直线/弧线的基础 PWM 和目标轮速差。
  */
 static void race_drive_config(straight_drive_config_t *config,
     int32_t base_pwm,
@@ -75,7 +75,7 @@ static void race_drive_config(straight_drive_config_t *config,
 }
 
 /**
- * @brief Convert heading error and gyro damping into a bounded turn command.
+ * @brief 将航向误差和陀螺仪阻尼转换为限幅后的转向量。
  */
 static int32_t race_heading_turn_from_error(int32_t heading_error_cdeg,
     int32_t gyro_z_filtered_mdps,
@@ -99,7 +99,7 @@ static int32_t race_heading_turn_from_error(int32_t heading_error_cdeg,
 }
 
 /**
- * @brief Estimate expected arc yaw progress from distance and turn direction.
+ * @brief 根据距离和转向方向估算弧线期望航向进度。
  */
 static int32_t race_arc_expected_yaw_cdeg(int32_t phase_distance_count,
     int32_t phase_turn_dir)
@@ -117,7 +117,7 @@ static int32_t race_arc_expected_yaw_cdeg(int32_t phase_distance_count,
 }
 
 /**
- * @brief Check whether an IR sample contains required bits and no forbidden bits.
+ * @brief 判断红外采样是否包含必需位且不包含禁止位。
  */
 static uint8_t race_ir_mask_seen(const ir_tracking_sample_t *sample,
     uint8_t seen_mask,
@@ -135,7 +135,7 @@ static uint8_t race_ir_mask_seen(const ir_tracking_sample_t *sample,
 }
 
 /**
- * @brief Check whether the left edge sensors see line.
+ * @brief 判断左侧边缘传感器是否看到线。
  */
 static uint8_t race_left_edge_seen(const ir_tracking_sample_t *sample,
     uint8_t require_right_clear)
@@ -146,7 +146,7 @@ static uint8_t race_left_edge_seen(const ir_tracking_sample_t *sample,
 }
 
 /**
- * @brief Check whether the right edge sensors see line.
+ * @brief 判断右侧边缘传感器是否看到线。
  */
 static uint8_t race_right_edge_seen(const ir_tracking_sample_t *sample,
     uint8_t require_left_clear)
@@ -157,7 +157,7 @@ static uint8_t race_right_edge_seen(const ir_tracking_sample_t *sample,
 }
 
 /**
- * @brief Detect when a turn error changes sign across the target heading.
+ * @brief 判断转向误差是否已经跨过目标航向。
  */
 static uint8_t race_turn_crossed_target(uint8_t error_valid,
     int32_t last_error_cdeg,
@@ -171,7 +171,7 @@ static uint8_t race_turn_crossed_target(uint8_t error_valid,
 }
 
 /**
- * @brief Predict yaw drift caused by current gyro-Z over a short time window.
+ * @brief 预测当前 Z 轴角速度在短时间窗内造成的航向漂移。
  */
 static int32_t race_predict_yaw_delta_cdeg(int32_t gyro_z_filtered_mdps,
     int32_t predict_ms)
@@ -183,7 +183,7 @@ static int32_t race_predict_yaw_delta_cdeg(int32_t gyro_z_filtered_mdps,
 }
 
 /**
- * @brief Return whether the fast-turn sensor stop logic has a valid line sample.
+ * @brief 判断快速转向停车逻辑是否拿到有效红外线采样。
  */
 static uint8_t race_sensor_fast_turn_line_seen(uint8_t ir_ok,
     const ir_tracking_sample_t *sample)
@@ -194,7 +194,7 @@ static uint8_t race_sensor_fast_turn_line_seen(uint8_t ir_ok,
 }
 
 /**
- * @brief Evaluate center/wide/error IR stop criteria for a fast turn.
+ * @brief 评估快速转向的中心线、宽线和误差停车条件。
  */
 static uint8_t race_sensor_fast_turn_line_ready(
     const sensor_fast_turn_config_t *config,
@@ -217,7 +217,7 @@ static uint8_t race_sensor_fast_turn_line_ready(
 }
 
 /**
- * @brief Evaluate yaw-based stop criteria for a fast turn.
+ * @brief 评估快速转向的航向停车条件。
  */
 static uint8_t race_sensor_fast_turn_yaw_ready(
     const sensor_fast_turn_config_t *config,
@@ -232,7 +232,7 @@ static uint8_t race_sensor_fast_turn_yaw_ready(
 }
 
 /**
- * @brief Decide whether the fast turn should switch to its slow PWM pair.
+ * @brief 判断快速转向是否应该切换到慢速 PWM 组合。
  */
 static uint8_t race_sensor_fast_turn_should_slow(
     const sensor_fast_turn_config_t *config,
@@ -250,7 +250,7 @@ static uint8_t race_sensor_fast_turn_should_slow(
 }
 
 /**
- * @brief Mutable state for race_sensor_fast_turn().
+ * @brief 快速转向函数使用的可变运行状态。
  */
 typedef struct {
     ir_tracking_sample_t sample;
@@ -281,7 +281,7 @@ typedef struct {
 } race_sensor_fast_turn_state_t;
 
 /**
- * @brief Convert fast-turn stop reason to log text.
+ * @brief 将快速转向停止原因转换为日志文本。
  */
 static const char *race_sensor_fast_turn_stop_reason_name(uint8_t stop_reason)
 {
@@ -301,7 +301,7 @@ static const char *race_sensor_fast_turn_stop_reason_name(uint8_t stop_reason)
 }
 
 /**
- * @brief Initialize sensors, encoders, yaw baseline, motor PWM, and logs.
+ * @brief 初始化传感器、编码器、航向基准和转向电机 PWM。
  */
 static void race_sensor_fast_turn_start(
     const sensor_fast_turn_config_t *config,
@@ -323,25 +323,6 @@ static void race_sensor_fast_turn_start(
             config->slow_motor_b_pwm : config->motor_b_pwm,
         (state->slow_mode != 0U) ?
             config->slow_motor_a_pwm : config->motor_a_pwm);
-    race_ram_log_event(RACE_RAM_EVENT_TURN_START,
-        0U,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(0U),
-        0,
-        g_race_post_point_phase_dist_count,
-        (state->turn_nav_ok != 0U) ? state->turn_yaw_start : 0,
-        0,
-        0,
-        config->yaw_stop_target_cdeg,
-        0,
-        0,
-        (state->turn_nav_ok != 0U) ? state->turn_gyro_z_filtered_mdps : 0,
-        0U,
-        &state->sample,
-        0,
-        0);
     race_log_printf("%s start: sensor_fast_turn pwm=%d/%d slow=%d/%d stop_mask=0x%02X forbid=0x%02X err_max=%ld yaw_stop=%u target=%ld\r\n",
         config->tag,
         config->motor_b_pwm,
@@ -356,7 +337,7 @@ static void race_sensor_fast_turn_start(
 }
 
 /**
- * @brief Refresh fast-turn IR/yaw/encoder state and slow-mode decision.
+ * @brief 刷新快速转向的红外、航向、编码器状态和慢速模式判断。
  */
 static void race_sensor_fast_turn_update(
     const sensor_fast_turn_config_t *config,
@@ -407,7 +388,7 @@ static void race_sensor_fast_turn_update(
 }
 
 /**
- * @brief Print one periodic fast-turn diagnostic sample.
+ * @brief 打印一行快速转向周期性诊断信息。
  */
 static void race_sensor_fast_turn_log_sample(
     const sensor_fast_turn_config_t *config,
@@ -440,7 +421,7 @@ static void race_sensor_fast_turn_log_sample(
 }
 
 /**
- * @brief Brake, capture final sensors, record logs, and close fast-turn state.
+ * @brief 刹车、读取最终传感器状态并结束快速转向。
  */
 static void race_sensor_fast_turn_finish(
     const sensor_fast_turn_config_t *config,
@@ -450,27 +431,6 @@ static void race_sensor_fast_turn_finish(
     state->ir_ok = IRTracking_ReadSample(&state->sample);
     state->nav_ok = JY62_PeekNavigation(&state->nav);
     encoder_get_total_counts(&state->motor_b_total, &state->motor_a_total);
-    race_ram_log_event(RACE_RAM_EVENT_TURN_STOP,
-        state->stop_reason,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(state->elapsed_ms),
-        motion_distance_count(state->motor_b_total, state->motor_a_total),
-        g_race_post_point_phase_dist_count,
-        (state->nav_ok != 0U) ? state->nav.yaw_relative_cdeg : 0,
-        state->turn_yaw_progress,
-        state->turn_yaw_delta,
-        config->yaw_stop_target_cdeg,
-        ((config->yaw_stop_enable != 0U) && (state->nav_ok != 0U)) ?
-            normalize_cdeg(state->nav.yaw_relative_cdeg -
-                config->yaw_stop_target_cdeg) : 0,
-        0,
-        (state->nav_ok != 0U) ? state->nav.gyro_z_filtered_mdps : 0,
-        state->ir_ok,
-        &state->sample,
-        state->motor_b_total,
-        state->motor_a_total);
     race_log_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u yaw_ready=%u\r\n",
         config->tag,
         race_sensor_fast_turn_stop_reason_name(state->stop_reason),
@@ -495,7 +455,7 @@ static void race_sensor_fast_turn_finish(
 }
 
 /**
- * @brief Execute an IR/yaw-assisted fast turn after a race point.
+ * @brief 在竞速点位后执行红外/航向辅助快速转向。
  */
 static uint8_t race_sensor_fast_turn(
     const sensor_fast_turn_config_t *config)
@@ -540,13 +500,12 @@ static uint8_t race_sensor_fast_turn(
     race_sensor_fast_turn_finish(config, &state);
 
     encoder_reset_distance_counts();
-    g_race_post_point_elapsed_ms += state.elapsed_ms;
     return ((state.stop_reason == 1U) || (state.stop_reason == 4U) ||
         (state.stop_reason == 6U)) ? 1U : 0U;
 }
 
 /**
- * @brief Turn in place/near-place until the configured yaw target is reached.
+ * @brief 原地或近原地转向，直到到达配置的目标航向。
  */
 static uint8_t race_gyro_turn_to_yaw(
     const gyro_turn_config_t *config)
@@ -599,25 +558,6 @@ static uint8_t race_gyro_turn_to_yaw(
     }
     TB6612_SetDifferential((slow_mode != 0U) ? slow_motor_b_pwm : motor_b_pwm,
         (slow_mode != 0U) ? slow_motor_a_pwm : motor_a_pwm);
-    race_ram_log_event(RACE_RAM_EVENT_TURN_START,
-        0U,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(0U),
-        0,
-        g_race_post_point_phase_dist_count,
-        turn_yaw_start,
-        0,
-        0,
-        yaw_stop_target_cdeg,
-        last_yaw_stop_error_cdeg,
-        0,
-        turn_gyro_z_filtered_mdps,
-        0U,
-        &sample,
-        0,
-        0);
     race_log_printf("%s start: gyro_turn pwm=%d/%d slow=%d/%d yaw0=%ld target=%ld yerr=%ld timeout=%d\r\n",
         tag,
         motor_b_pwm,
@@ -723,26 +663,6 @@ static uint8_t race_gyro_turn_to_yaw(
     ir_ok = IRTracking_ReadSample(&sample);
     nav_ok = JY62_PeekNavigation(&nav);
     encoder_get_total_counts(&motor_b_total, &motor_a_total);
-    race_ram_log_event(RACE_RAM_EVENT_TURN_STOP,
-        stop_reason,
-        g_race_log_lap,
-        g_race_log_phase,
-        (predictive_stop_ready != 0U) ? RACE_LOG_FLAG_PREDICT_STOP : 0U,
-        race_post_point_event_ms(elapsed_ms),
-        motion_distance_count(motor_b_total, motor_a_total),
-        g_race_post_point_phase_dist_count,
-        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
-        (nav_ok != 0U) ? abs_i32(turn_yaw_delta) : 0,
-        (nav_ok != 0U) ? turn_yaw_delta : 0,
-        yaw_stop_target_cdeg,
-        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
-            yaw_stop_target_cdeg) : 0,
-        0,
-        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
-        ir_ok,
-        &sample,
-        motor_b_total,
-        motor_a_total);
     race_log_printf("%s stop: reason=%s t=%lu nav=%u yaw=%ld target=%ld yerr=%ld ydelta=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld slow=%u\r\n",
         tag,
         race_reason_name(stop_reason),
@@ -765,12 +685,11 @@ static uint8_t race_gyro_turn_to_yaw(
         slow_mode);
 
     encoder_reset_distance_counts();
-    g_race_post_point_elapsed_ms += elapsed_ms;
     return (stop_reason == 6U) ? 1U : 0U;
 }
 
 /**
- * @brief Drive forward a fixed encoder distance after a point event.
+ * @brief 点位后按固定编码器距离向前过渡。
  */
 static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
 {
@@ -786,25 +705,6 @@ static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
     uint8_t nav_ok = 0U;
 
     if (advance_count <= 0) {
-        race_ram_log_event(RACE_RAM_EVENT_ADVANCE_STOP,
-            1U,
-            g_race_log_lap,
-            g_race_log_phase,
-            0U,
-            race_post_point_event_ms(0U),
-            0,
-            g_race_post_point_phase_dist_count,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0U,
-            &sample,
-            0,
-            0);
         race_log_printf("%s skip: advance_count=%ld\r\n", tag, advance_count);
         return 1U;
     }
@@ -813,25 +713,6 @@ static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
     encoder_enable_interrupts();
     TB6612_SetDifferential((int16_t)RACE_POINT_ADVANCE_PWM,
         (int16_t)RACE_POINT_ADVANCE_PWM);
-    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_START,
-        0U,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(0U),
-        0,
-        g_race_post_point_phase_dist_count,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0U,
-        &sample,
-        0,
-        0);
     race_log_printf("%s start: advance_count=%ld pwm=%d\r\n",
         tag,
         advance_count,
@@ -885,26 +766,6 @@ static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
     distance_count = motion_distance_count(motor_b_total, motor_a_total);
     nav_ok = JY62_PeekNavigation(&nav);
     ir_ok = IRTracking_ReadSample(&sample);
-    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_STOP,
-        stop_reason,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(elapsed_ms),
-        distance_count,
-        g_race_post_point_phase_dist_count,
-        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
-        ir_ok,
-        &sample,
-        motor_b_total,
-        motor_a_total);
-    g_race_post_point_elapsed_ms += elapsed_ms;
     race_log_printf("%s stop: reason=%s t=%lu dist=%ld nav=%u yaw=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
         tag,
         (stop_reason == 1U) ? "distance" : ((stop_reason == 2U) ? "timeout" : "uart_stop"),
@@ -926,7 +787,7 @@ static uint8_t race_advance_after_point(const char *tag, int32_t advance_count)
 }
 
 /**
- * @brief Task4 arc-exit advance with a small gyro target-heading correction.
+ * @brief 任务四弧线出口后，带小幅航向保持修正的前进过渡。
  */
 static uint8_t race_advance_after_point_with_heading(const char *tag,
     int32_t advance_count,
@@ -960,25 +821,6 @@ static uint8_t race_advance_after_point_with_heading(const char *tag,
         target_valid = 1U;
     }
     TB6612_SetDifferential((int16_t)motor_b_pwm, (int16_t)motor_a_pwm);
-    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_START,
-        0U,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(0U),
-        0,
-        g_race_post_point_phase_dist_count,
-        0,
-        0,
-        0,
-        target_cdeg,
-        0,
-        0,
-        0,
-        0U,
-        &sample,
-        0,
-        0);
     race_log_printf("%s start: advance_count=%ld pwm=%d hold=%u target=%ld gyro=1\r\n",
         tag,
         advance_count,
@@ -1060,27 +902,6 @@ static uint8_t race_advance_after_point_with_heading(const char *tag,
     distance_count = motion_distance_count(motor_b_total, motor_a_total);
     nav_ok = JY62_PeekNavigation(&nav);
     ir_ok = IRTracking_ReadSample(&sample);
-    race_ram_log_event(RACE_RAM_EVENT_ADVANCE_STOP,
-        stop_reason,
-        g_race_log_lap,
-        g_race_log_phase,
-        0U,
-        race_post_point_event_ms(elapsed_ms),
-        distance_count,
-        g_race_post_point_phase_dist_count,
-        (nav_ok != 0U) ? nav.yaw_relative_cdeg : 0,
-        0,
-        0,
-        target_cdeg,
-        (nav_ok != 0U) ? normalize_cdeg(nav.yaw_relative_cdeg -
-            target_cdeg) : 0,
-        correction,
-        (nav_ok != 0U) ? nav.gyro_z_filtered_mdps : 0,
-        ir_ok,
-        &sample,
-        motor_b_total,
-        motor_a_total);
-    g_race_post_point_elapsed_ms += elapsed_ms;
     race_log_printf("%s stop: reason=%s t=%lu dist=%ld nav=%u yaw=%ld target=%ld herr=%ld corr=%ld gzlp=%ld ir=%u raw=0x%02X mask=0x%02X cnt=%u lost=%u err=%ld B=%ld A=%ld\r\n",
         tag,
         race_reason_name(stop_reason),
@@ -1106,7 +927,7 @@ static uint8_t race_advance_after_point_with_heading(const char *tag,
 }
 
 /**
- * @brief Drive forward after a forced straight turn until any line is found.
+ * @brief 强制入弯后向前找线，直到任意有效线出现。
  */
 static uint8_t race_drive_forward_until_line(const char *tag, int32_t max_count)
 {
