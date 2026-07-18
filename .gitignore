@@ -1,70 +1,18 @@
-# 本地编辑器配置
+﻿# Local editor and agent configuration
 .vscode/
 .idea/
-
-# CCS / Eclipse IDE 自动生成配置
-.settings/
-.theia/
-main.theia-workspace
-
-# CCS / Eclipse 编译输出目录
-/Debug/
-/Release/
-/build/
-
-# 目标文件和依赖文件
-*.o
-*.obj
-*.d
-
-# 链接和固件输出文件
-*.out
-*.elf
-*.hex
-*.bin
-*.map
-*_linkInfo.xml
-
-# 自动生成的 make/build 辅助文件
-makefile
-objects.mk
-sources.mk
-subdir_rules.mk
-subdir_vars.mk
-*.opt
-*.genlibs
-
-# clangd 缓存
-.clangd
-.clangd/
-**/.clangd/
-
-# 操作系统临时文件
-Thumbs.db
-.DS_Store
-
-# 串口、实车调试和表格类临时输出
-*.log
-*.csv
-/logs/
-/data/
-
-# Office 临时锁文件
-~$*.docx
-~$*.xlsx
-~$*.pptx
-
-# Python 缓存
-__pycache__/
-*.pyc
-
-.codegraph/
-
-# 本地代理/编辑器配置
 .agents/
 .codex/
 opencode.json
 
-# 本地审查输出
-result.md
-.mimocode/
+# Operating system files
+Thumbs.db
+.DS_Store
+
+# Common temporary files
+**/__pycache__/
+**/*.pyc
+**/*.log
+~$*.docx
+~$*.xlsx
+~$*.pptx
