@@ -1,0 +1,53 @@
+calibration_capture_version=2026-07-21-v3-tracked-batch
+distance_point_count=21
+distance_step_cm=5.0
+samples_per_distance=5
+max_scale_disagreement=0.005000
+max_center_shift_ratio=0.100000
+
+statistics:
+distance=100.0 count=5 median_scale=11.458945 mad=0.003406 min=11.455540 max=11.470882
+distance=105.0 count=5 median_scale=10.999426 mad=0.002031 min=10.991890 max=11.001481
+distance=110.0 count=5 median_scale=10.507847 mad=0.000521 min=10.505850 max=10.508788
+distance=115.0 count=5 median_scale=10.064770 mad=0.000094 min=10.064675 max=10.069414
+distance=120.0 count=5 median_scale=9.646990 mad=0.001295 min=9.644004 max=9.648285
+distance=125.0 count=5 median_scale=9.238840 mad=0.001495 min=9.234866 max=9.241673
+distance=130.0 count=5 median_scale=8.896135 mad=0.002415 min=8.893564 max=8.906517
+distance=135.0 count=5 median_scale=8.583822 mad=0.000903 min=8.582876 max=8.591844
+distance=140.0 count=5 median_scale=8.251059 mad=0.002934 min=8.248125 max=8.269241
+distance=145.0 count=5 median_scale=7.994976 mad=0.003961 min=7.989847 max=8.000913
+distance=150.0 count=5 median_scale=7.708344 mad=0.001010 min=7.707296 max=7.717613
+distance=155.0 count=5 median_scale=7.445501 mad=0.000611 min=7.441345 max=7.453570
+distance=160.0 count=5 median_scale=7.253651 mad=0.000777 min=7.246446 max=7.254428
+distance=165.0 count=5 median_scale=7.029535 mad=0.007742 min=7.019621 max=7.040478
+distance=170.0 count=5 median_scale=6.826168 mad=0.008338 min=6.816068 max=6.834524
+distance=175.0 count=5 median_scale=6.623625 mad=0.000634 min=6.622991 max=6.626336
+distance=180.0 count=5 median_scale=6.402347 mad=0.004529 min=6.396987 max=6.407760
+distance=185.0 count=5 median_scale=6.250068 mad=0.001816 min=6.248252 max=6.253752
+distance=190.0 count=5 median_scale=6.087235 mad=0.004070 min=6.081773 max=6.093721
+distance=195.0 count=5 median_scale=5.921023 mad=0.001970 min=5.917672 max=5.922994
+distance=200.0 count=5 median_scale=5.766264 mad=0.003412 min=5.760961 max=5.769676
+
+DISTANCE_CALIBRATION_POINTS = (
+    (100.0, 11.458945),
+    (105.0, 10.999426),
+    (110.0, 10.507847),
+    (115.0, 10.064770),
+    (120.0, 9.646990),
+    (125.0, 9.238840),
+    (130.0, 8.896135),
+    (135.0, 8.583822),
+    (140.0, 8.251059),
+    (145.0, 7.994976),
+    (150.0, 7.708344),
+    (155.0, 7.445501),
+    (160.0, 7.253651),
+    (165.0, 7.029535),
+    (170.0, 6.826168),
+    (175.0, 6.623625),
+    (180.0, 6.402347),
+    (185.0, 6.250068),
+    (190.0, 6.087235),
+    (195.0, 5.921023),
+    (200.0, 5.766264),
+)

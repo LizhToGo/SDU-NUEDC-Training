@@ -16,3 +16,8 @@ Thumbs.db
 ~$*.docx
 ~$*.xlsx
 ~$*.pptx
+
+# Generated analysis and test artifacts
+fuc-report*.json
+**/overlap_lab_output/
+**/out/

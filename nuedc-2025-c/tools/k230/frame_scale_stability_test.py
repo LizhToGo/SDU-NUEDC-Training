@@ -51,6 +51,8 @@ IDE_PREVIEW_QUALITY = 55
 
 RECT_THRESHOLD = 1800
 COARSE_MAX_ATTEMPTS = 3
+COARSE_HYPOTHESES_PER_ATTEMPT = 4
+MAX_HIGH_RES_HYPOTHESES = 6
 HIGH_RES_FLUSH_FRAMES = 2
 
 OUTER_WIDTH_CM = 21.0
@@ -69,8 +71,12 @@ CSV_FIELDS = (
     "known_distance_cm",
     "valid",
     "pair",
+    "localization_valid",
     "mode",
     "error",
+    "measurement_reject_reason",
+    "measurement_confidence",
+    "measurement_confidence_rank",
     "coarse_attempts",
     "coarse_candidates",
     "coarse_score",
@@ -86,6 +92,18 @@ CSV_FIELDS = (
     "inner_search_radius",
     "outer_search_radius",
     "frame_model_disagreement",
+    "detected_frame_disagreement",
+    "inner_fill_ratio",
+    "outer_fill_ratio",
+    "inner_max_opposite_error",
+    "outer_max_opposite_error",
+    "ring_valid_samples",
+    "ring_inside_contrast",
+    "ring_outside_contrast",
+    "ring_inside_pass_ratio",
+    "ring_outside_pass_ratio",
+    "ring_min_side_pass_ratio",
+    "ring_mean_thickness",
     "outer_top_px",
     "outer_right_px",
     "outer_bottom_px",
@@ -106,6 +124,7 @@ CSV_FIELDS = (
     "inner_scale_w",
     "inner_scale_h",
     "inner_scale_area",
+    "measurement_scale_inner_geom",
     "effective_scale_geom4",
     "effective_scale_int_geom4",
     "float_int_scale_delta_pct",
@@ -416,8 +435,12 @@ def new_row(sample_index):
         "known_distance_cm": KNOWN_DISTANCE_CM,
         "valid": 0,
         "pair": 0,
+        "localization_valid": 0,
         "mode": "NOT_RUN",
         "error": "",
+        "measurement_reject_reason": "NOT_RUN",
+        "measurement_confidence": "REJECT",
+        "measurement_confidence_rank": 0,
         "coarse_attempts": COARSE_MAX_ATTEMPTS,
         "coarse_candidates": 0,
         "coarse_ms": 0,
@@ -470,27 +493,40 @@ def measure_sample(sample_index, first_preview, detector, refiner):
             if attempt > 0:
                 preview = sensor.snapshot(chn=PREVIEW_CH)
             coarse_start = time.ticks_ms()
-            candidate = detector.detect(preview, roi=None)
+            attempt_results = detector.detect_hypotheses(
+                preview,
+                roi=None,
+                max_results=COARSE_HYPOTHESES_PER_ATTEMPT,
+            )
             row["coarse_ms"] += time.ticks_diff(
                 time.ticks_ms(), coarse_start
             )
-            if candidate is not None:
+            for candidate in attempt_results:
                 coarse_results.append(candidate)
-                if (
-                    best_coarse is None
-                    or candidate["score"] > best_coarse["score"]
-                ):
-                    best_coarse = candidate
+
+        coarse_results = detector.select_distinct_hypotheses(
+            coarse_results,
+            max_results=MAX_HIGH_RES_HYPOTHESES,
+        )
+        for candidate in coarse_results:
+            if (
+                best_coarse is None
+                or candidate["score"] > best_coarse["score"]
+            ):
+                best_coarse = candidate
 
         row["coarse_candidates"] = len(coarse_results)
         if best_coarse is None:
             row["mode"] = "COARSE_NONE"
+            row["measurement_reject_reason"] = "COARSE_NONE"
             row["error"] = "coarse frame not found"
             row["total_ms"] = time.ticks_diff(time.ticks_ms(), total_start)
             return row, None, preview
 
         row["coarse_score"] = best_coarse["score"]
-        preview_result = coarse_result_to_preview(best_coarse)
+        # A coarse seed is only a search hypothesis.  Never draw it as a
+        # locked result before the 1080p identity gates accept it.
+        preview_result = None
 
         gc.collect()
         capture_start = time.ticks_ms()
@@ -509,6 +545,7 @@ def measure_sample(sample_index, first_preview, detector, refiner):
         gc.collect()
         if high_image is None:
             row["mode"] = "CONVERT_NONE"
+            row["measurement_reject_reason"] = "CONVERT_NONE"
             row["error"] = "RGB888 to RGB565 conversion returned None"
             row["total_ms"] = time.ticks_diff(time.ticks_ms(), total_start)
             return row, preview_result, preview
@@ -528,16 +565,33 @@ def measure_sample(sample_index, first_preview, detector, refiner):
             )
             if candidate_high is None:
                 continue
+            candidate_rank = candidate_high.get(
+                "measurement_confidence_rank",
+                2 if candidate_high["measurement_valid"] else 0,
+            )
+            selected_rank = (
+                high_result.get(
+                    "measurement_confidence_rank",
+                    2 if high_result["measurement_valid"] else 0,
+                )
+                if high_result is not None
+                else -1
+            )
             if (
                 high_result is None
-                or candidate_high["quality_score"]
-                > high_result["quality_score"]
+                or candidate_rank > selected_rank
+                or (
+                    candidate_rank == selected_rank
+                    and candidate_high["quality_score"]
+                    > high_result["quality_score"]
+                )
             ):
                 high_result = candidate_high
                 selected_coarse = candidate
 
         if high_result is None:
             row["mode"] = "REFINE_NONE"
+            row["measurement_reject_reason"] = "REFINE_NONE"
             row["error"] = "high-resolution refinement returned None"
             row["total_ms"] = time.ticks_diff(time.ticks_ms(), total_start)
             return row, preview_result, preview
@@ -545,6 +599,18 @@ def measure_sample(sample_index, first_preview, detector, refiner):
         row["coarse_score"] = selected_coarse["score"]
         row["mode"] = high_result["mode"]
         row["pair"] = 1 if high_result["mode"] == "HIGH_RES_PAIR" else 0
+        row["localization_valid"] = (
+            1 if high_result.get("localization_valid", False) else 0
+        )
+        row["measurement_reject_reason"] = high_result.get(
+            "measurement_reject_reason", "UNKNOWN"
+        )
+        row["measurement_confidence"] = high_result.get(
+            "measurement_confidence", "UNKNOWN"
+        )
+        row["measurement_confidence_rank"] = high_result.get(
+            "measurement_confidence_rank", 0
+        )
         row["quality_score"] = high_result["quality_score"]
         row["inner_valid_sides"] = high_result["inner_valid_sides"]
         row["outer_valid_sides"] = high_result["outer_valid_sides"]
@@ -559,15 +625,53 @@ def measure_sample(sample_index, first_preview, detector, refiner):
         row["frame_model_disagreement"] = high_result[
             "frame_model_disagreement"
         ]
+        row["detected_frame_disagreement"] = high_result.get(
+            "detected_frame_disagreement",
+            high_result["frame_model_disagreement"],
+        )
+        row["inner_fill_ratio"] = high_result.get("inner_fill_ratio")
+        row["outer_fill_ratio"] = high_result.get("outer_fill_ratio")
+        row["inner_max_opposite_error"] = high_result.get(
+            "inner_max_opposite_error"
+        )
+        row["outer_max_opposite_error"] = high_result.get(
+            "outer_max_opposite_error"
+        )
+        row["ring_valid_samples"] = high_result.get("ring_valid_samples")
+        row["ring_inside_contrast"] = high_result.get(
+            "ring_inside_contrast"
+        )
+        row["ring_outside_contrast"] = high_result.get(
+            "ring_outside_contrast"
+        )
+        row["ring_inside_pass_ratio"] = high_result.get(
+            "ring_inside_pass_ratio"
+        )
+        row["ring_outside_pass_ratio"] = high_result.get(
+            "ring_outside_pass_ratio"
+        )
+        row["ring_min_side_pass_ratio"] = high_result.get(
+            "ring_min_side_pass_ratio"
+        )
+        row["ring_mean_thickness"] = high_result.get(
+            "ring_mean_thickness"
+        )
 
         add_geometry_to_row(row, high_result)
+        row["measurement_scale_inner_geom"] = math.sqrt(
+            row["inner_scale_w"] * row["inner_scale_h"]
+        )
         row["valid"] = (
             1
             if high_result["measurement_valid"]
-            and row.get("effective_scale_geom4") is not None
+            and row.get("measurement_scale_inner_geom") is not None
             else 0
         )
-        preview_result = high_result_to_preview(high_result)
+        preview_result = (
+            high_result_to_preview(high_result)
+            if high_result["measurement_valid"]
+            else None
+        )
         row["total_ms"] = time.ticks_diff(time.ticks_ms(), total_start)
         return row, preview_result, preview
 
@@ -648,29 +752,35 @@ def write_summary(path, rows, csv_path, total_batch_ms):
     pair_count = 0
     fallback_count = 0
     mode_counts = {}
+    reject_counts = {}
+    confidence_counts = {}
     for row in rows:
         valid_count += int(row.get("valid", 0))
         pair_count += int(row.get("pair", 0))
         mode = row.get("mode", "UNKNOWN")
         mode_counts[mode] = mode_counts.get(mode, 0) + 1
+        reject_reason = row.get("measurement_reject_reason", "UNKNOWN")
+        reject_counts[reject_reason] = reject_counts.get(reject_reason, 0) + 1
+        confidence = row.get("measurement_confidence", "UNKNOWN")
+        confidence_counts[confidence] = confidence_counts.get(confidence, 0) + 1
         if mode == "HIGH_RES_FALLBACK":
             fallback_count += 1
 
-    effective_stats = calculate_stats(
-        values_from_rows(rows, "effective_scale_geom4")
+    measurement_scale_stats = calculate_stats(
+        values_from_rows(rows, "measurement_scale_inner_geom")
     )
     grade = "FAIL"
     if (
-        effective_stats is not None
+        measurement_scale_stats is not None
         and valid_count == SAMPLE_COUNT
         and fallback_count == 0
-        and effective_stats["cv_pct"] <= 0.5
-        and effective_stats["peak_to_peak_pct"] <= 1.0
+        and measurement_scale_stats["cv_pct"] <= 0.5
+        and measurement_scale_stats["peak_to_peak_pct"] <= 1.0
     ):
         grade = "PASS"
         if (
-            effective_stats["cv_pct"] <= 0.3
-            and effective_stats["peak_to_peak_pct"] <= 0.8
+            measurement_scale_stats["cv_pct"] <= 0.3
+            and measurement_scale_stats["peak_to_peak_pct"] <= 0.8
         ):
             grade = "EXCELLENT"
 
@@ -691,6 +801,24 @@ def write_summary(path, rows, csv_path, total_batch_ms):
             file.write("%s:%d" % (mode, mode_counts[mode]))
             first = False
         file.write("\n\n")
+        file.write("confidence_counts=")
+        first = True
+        for confidence in sorted(confidence_counts.keys()):
+            if not first:
+                file.write(",")
+            file.write(
+                "%s:%d" % (confidence, confidence_counts[confidence])
+            )
+            first = False
+        file.write("\n\n")
+        file.write("reject_counts=")
+        first = True
+        for reason in sorted(reject_counts.keys()):
+            if not first:
+                file.write(",")
+            file.write("%s:%d" % (reason, reject_counts[reason]))
+            first = False
+        file.write("\n\n")
 
         file.write("Definitions:\n")
         file.write("  scale unit: pixels per centimetre\n")
@@ -698,7 +826,16 @@ def write_summary(path, rows, csv_path, total_batch_ms):
         file.write("  ratio_error and disagreement are fractional, not percent\n")
         file.write("  edge_rms unit: high-resolution pixels\n\n")
 
-        write_stats_line(file, "effective_scale_geom4", effective_stats)
+        write_stats_line(
+            file,
+            "measurement_scale_inner_geom",
+            measurement_scale_stats,
+        )
+        write_stats_line(
+            file,
+            "effective_scale_geom4_diagnostic",
+            calculate_stats(values_from_rows(rows, "effective_scale_geom4")),
+        )
         write_stats_line(
             file,
             "effective_scale_int_geom4",
@@ -741,6 +878,21 @@ def write_summary(path, rows, csv_path, total_batch_ms):
         )
         write_stats_line(
             file,
+            "ring_inside_contrast",
+            calculate_stats(values_from_rows(rows, "ring_inside_contrast")),
+        )
+        write_stats_line(
+            file,
+            "ring_inside_pass_ratio",
+            calculate_stats(values_from_rows(rows, "ring_inside_pass_ratio")),
+        )
+        write_stats_line(
+            file,
+            "ring_min_side_pass_ratio",
+            calculate_stats(values_from_rows(rows, "ring_min_side_pass_ratio")),
+        )
+        write_stats_line(
+            file,
             "outer_edge_rms",
             calculate_stats(values_from_rows(rows, "outer_edge_rms", True)),
         )
@@ -763,9 +915,11 @@ def write_summary(path, rows, csv_path, total_batch_ms):
         )
 
         file.write("\n")
-        if effective_stats is not None:
+        if measurement_scale_stats is not None:
             distance_std_cm = (
-                KNOWN_DISTANCE_CM * effective_stats["cv_pct"] / 100.0
+                KNOWN_DISTANCE_CM
+                * measurement_scale_stats["cv_pct"]
+                / 100.0
             )
             file.write(
                 "distance_equivalent_std_cm=%.4f\n" % distance_std_cm
@@ -773,11 +927,17 @@ def write_summary(path, rows, csv_path, total_batch_ms):
         else:
             file.write("distance_equivalent_std_cm=NONE\n")
         file.write(
-            "criterion=all samples valid; no HIGH_RES_FALLBACK; effective-scale CV <= 0.5%%; peak-to-peak <= 1.0%%\n"
+            "criterion=all samples valid; inner quality gate passed; inner-width-height-geometric-scale CV <= 0.5%; peak-to-peak <= 1.0%\n"
         )
         file.write("stability_grade=%s\n" % grade)
 
-    return grade, effective_stats, valid_count, pair_count, fallback_count
+    return (
+        grade,
+        measurement_scale_stats,
+        valid_count,
+        pair_count,
+        fallback_count,
+    )
 
 
 def run_batch(detector, refiner):
@@ -815,6 +975,7 @@ def run_batch(detector, refiner):
             row = new_row(sample_index)
             row["mode"] = "EXCEPTION"
             row["error"] = repr(error)
+            row["measurement_reject_reason"] = "EXCEPTION"
             row["total_ms"] = time.ticks_diff(
                 time.ticks_ms(), sample_start
             )
@@ -838,20 +999,24 @@ def run_batch(detector, refiner):
         )
         Display.show_image(result_preview, x=PREVIEW_X, y=PREVIEW_Y)
 
-        scale = row.get("effective_scale_geom4")
+        scale = row.get("measurement_scale_inner_geom")
         scale_text = "NONE" if scale is None else "%.6f" % scale
         print(
-            "sample=%02d/%02d valid=%d mode=%s pair=%d coarse=%d scale=%s rms=%.3f/%.3f time=%dms"
+            "sample=%02d/%02d valid=%d confidence=%s mode=%s reject=%s pair=%d coarse=%d inner_geom_scale=%s rms=%.3f/%.3f ring=%.2f/%.2f time=%dms"
             % (
                 sample_index,
                 SAMPLE_COUNT,
                 row.get("valid", 0),
+                row.get("measurement_confidence", "UNKNOWN"),
                 row.get("mode", "UNKNOWN"),
+                row.get("measurement_reject_reason", "UNKNOWN"),
                 row.get("pair", 0),
                 row.get("coarse_candidates", 0),
                 scale_text,
                 row.get("inner_edge_rms", -1.0),
                 row.get("outer_edge_rms", -1.0),
+                row.get("ring_inside_pass_ratio", 0.0),
+                row.get("ring_min_side_pass_ratio", 0.0),
                 row.get("total_ms", 0),
             )
         )
@@ -860,7 +1025,7 @@ def run_batch(detector, refiner):
     total_batch_ms = time.ticks_diff(time.ticks_ms(), batch_start)
     (
         grade,
-        effective_stats,
+        measurement_scale_stats,
         valid_count,
         pair_count,
         fallback_count,
@@ -878,15 +1043,17 @@ def run_batch(detector, refiner):
             total_batch_ms,
         )
     )
-    if effective_stats is not None:
+    if measurement_scale_stats is not None:
         print(
-            "effective_scale mean=%.6f std=%.6f CV=%.4f%% peak_to_peak=%.4f%% distance_equivalent_std=%.4fcm"
+            "inner_geom_scale mean=%.6f std=%.6f CV=%.4f%% peak_to_peak=%.4f%% distance_equivalent_std=%.4fcm"
             % (
-                effective_stats["mean"],
-                effective_stats["std"],
-                effective_stats["cv_pct"],
-                effective_stats["peak_to_peak_pct"],
-                KNOWN_DISTANCE_CM * effective_stats["cv_pct"] / 100.0,
+                measurement_scale_stats["mean"],
+                measurement_scale_stats["std"],
+                measurement_scale_stats["cv_pct"],
+                measurement_scale_stats["peak_to_peak_pct"],
+                KNOWN_DISTANCE_CM
+                * measurement_scale_stats["cv_pct"]
+                / 100.0,
             )
         )
     print("CSV:", csv_path)
@@ -911,6 +1078,8 @@ try:
     refiner = HighResRefiner(
         expected_short_ratio=EXPECTED_SHORT_RATIO,
         expected_long_ratio=EXPECTED_LONG_RATIO,
+        expected_inner_aspect=EXPECTED_INNER_ASPECT,
+        expected_outer_aspect=EXPECTED_OUTER_ASPECT,
     )
 
     sensor = Sensor(
